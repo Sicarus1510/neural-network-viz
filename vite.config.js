@@ -1,10 +1,12 @@
 import { defineConfig } from 'vite';
-import glsl from 'vite-plugin-glsl';
 
 export default defineConfig({
-  plugins: [glsl()],
+  root: 'src',
+  publicDir: '../public',
   build: {
     target: 'es2020',
+    outDir: '../dist',
+    emptyOutDir: true,
     minify: 'terser',
     terserOptions: {
       compress: {
