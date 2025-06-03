@@ -30,16 +30,16 @@ class NeuralNetworkApp {
         
         this.params = {
             animationSpeed: 1.0,
-            glowIntensity: 1.5,
-            particleSize: 3.0,
-            particleCount: 5000,
+            glowIntensity: 1.8,
+            particleSize: 3.5,
+            particleCount: 8000,
             networkScale: 1.0,
-            rotationSpeed: 0.1,
-            pulseSpeed: 2.0,
+            rotationSpeed: 0.15,
+            pulseSpeed: 2.5,
             enableInteraction: true,
-            bloomStrength: 1.5,
-            bloomRadius: 0.4,
-            bloomThreshold: 0.85
+            bloomStrength: 1.8,
+            bloomRadius: 0.5,
+            bloomThreshold: 0.7
         };
         
         // Initialize flags
@@ -102,10 +102,11 @@ class NeuralNetworkApp {
             // Create particle system
             this.updateLoadingMessage('Creating particle system...');
             this.particleSystem = new ParticleSystem(
-                this.scene, 
-                nodePositions,
-                this.resources.textures.particle || this.createFallbackTexture(),
-                this.params
+            this.scene,
+            nodePositions,
+            this.resources.textures.particle || this.createFallbackTexture(),
+            this.params,
+            this.neuralNetwork // Pass neural network reference
             );
             console.log('✓ Particle system initialized');
             
