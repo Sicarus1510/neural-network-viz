@@ -1,8 +1,10 @@
 import { defineConfig } from 'vite';
+import glsl from 'vite-plugin-glsl';
 
 export default defineConfig({
   root: 'src',
   publicDir: '../public',
+  base: './',  // Important for relative paths
   build: {
     target: 'es2020',
     outDir: '../dist',
@@ -17,15 +19,20 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks: {
-          three: ['three'],
-          postprocessing: ['postprocessing']
+          'three': ['three'],
+          'three-addons': ['three/examples/jsm/controls/OrbitControls.js'],
+          'postprocessing': ['postprocessing'],
+          'tweakpane': ['tweakpane']
         }
       }
-    }
+    },
+    assetsInlineLimit: 4096  // Inline small assets
   },
   server: {
     port: 3000,
     open: true
   },
-  assetsInclude: ['**/*.glsl']
+  optimizeDeps: {
+    include: ['three', 'postprocessing', 'tweakpane']
+  }
 });
