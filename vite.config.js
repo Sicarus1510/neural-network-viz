@@ -1,10 +1,11 @@
 import { defineConfig } from 'vite';
-import glsl from 'vite-plugin-glsl';
+import glsl from 'vite-plugin-glsl';  // This import was missing!
 
 export default defineConfig({
   root: 'src',
   publicDir: '../public',
-  base: './',  // Important for relative paths
+  base: './',
+  plugins: [glsl()],  // This is required to process .glsl files
   build: {
     target: 'es2020',
     outDir: '../dist',
@@ -26,7 +27,7 @@ export default defineConfig({
         }
       }
     },
-    assetsInlineLimit: 4096  // Inline small assets
+    assetsInlineLimit: 4096
   },
   server: {
     port: 3000,
