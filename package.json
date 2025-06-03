@@ -1,0 +1,28 @@
+{
+  "name": "neural-network-viz",
+  "version": "1.0.0",
+  "description": "High-performance neural network visualization with Three.js",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "deploy": "npm run build && vercel --prod"
+  },
+  "dependencies": {
+    "three": "^0.160.0",
+    "postprocessing": "^6.34.0",
+    "tweakpane": "^4.0.3"
+  },
+  "devDependencies": {
+    "vite": "^5.0.10",
+    "@types/three": "^0.160.0",
+    "terser": "^5.26.0",
+    "vite-plugin-glsl": "^1.2.1"
+  },
+  "browserslist": [
+    "last 2 versions",
+    "not dead",
+    "> 0.2%"
+  ]
+}
