@@ -11,8 +11,8 @@ html, body {
 }
 
 body {
-    background-color: #000;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background-color: #f0f0f0;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
 }
@@ -23,25 +23,27 @@ body {
     left: 0;
     width: 100%;
     height: 100%;
-    touch-action: none;
     display: block;
+    cursor: grab;
 }
 
+#webgl-canvas:active {
+    cursor: grabbing;
+}
+
+/* Loading screen */
 .loading-screen {
     position: fixed;
     top: 0;
     left: 0;
     width: 100%;
     height: 100%;
-    background-color: rgba(0, 0, 0, 0.95);
+    background-color: #f0f0f0;
     display: flex;
-    flex-direction: column;
     justify-content: center;
     align-items: center;
     z-index: 1000;
     transition: opacity 0.5s ease-out;
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
 }
 
 .loading-screen.hidden {
@@ -50,47 +52,66 @@ body {
 }
 
 .loader {
-    width: 50px;
-    height: 50px;
-    border: 3px solid rgba(255, 255, 255, 0.1);
-    border-top-color: #ff6b6b;
+    width: 60px;
+    height: 60px;
+    position: relative;
+}
+
+.loader::before,
+.loader::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
     border-radius: 50%;
-    animation: spin 1s linear infinite;
+    border: 3px solid transparent;
+    border-top-color: #ff8844;
+    animation: spin 1.5s linear infinite;
+}
+
+.loader::after {
+    animation-delay: 0.2s;
+    border-top-color: #ffaa44;
 }
 
 @keyframes spin {
-    to { transform: rotate(360deg); }
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
 }
 
-.loading-screen p {
-    color: rgba(255, 255, 255, 0.9);
-    margin-top: 20px;
-    font-size: 14px;
-    letter-spacing: 0.5px;
+/* Stats panel (dev only) */
+#stats {
+    position: fixed !important;
+    top: 10px !important;
+    left: 10px !important;
 }
 
-/* Tweakpane customization */
-.tp-dfwv {
-    width: 280px !important;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
-}
-
-/* Accessibility improvements */
-@media (prefers-reduced-motion: reduce) {
-    * {
-        animation-duration: 0.01ms !important;
-        animation-iteration-count: 1 !important;
-        transition-duration: 0.01ms !important;
+/* Responsive */
+@media (max-width: 768px) {
+    body {
+        touch-action: pan-x pan-y;
     }
 }
 
-/* High contrast mode support */
+/* High contrast mode */
 @media (prefers-contrast: high) {
     .loading-screen {
-        background-color: #000;
+        background-color: #fff;
     }
-    .loader {
-        border-color: #fff;
-        border-top-color: #ff0000;
+    
+    .loader::before,
+    .loader::after {
+        border-width: 4px;
+    }
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+    .loader::before,
+    .loader::after {
+        animation: none;
+        border: 3px solid #ff8844;
     }
 }

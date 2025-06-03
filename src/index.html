@@ -2,30 +2,18 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Neural Network Visualization</title>
-    <meta name="description" content="Interactive 3D neural network visualization with real-time particle effects">
-    <meta name="keywords" content="neural network, 3d visualization, webgl, three.js">
-    <meta property="og:title" content="Neural Network Visualization">
-    <meta property="og:description" content="Interactive 3D neural network visualization">
-    <meta property="og:type" content="website">
-    <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin>
-    <link rel="dns-prefetch" href="https://fonts.googleapis.com">
+    <meta name="description" content="Interactive 3D neural network visualization with volumetric effects">
     <link rel="stylesheet" href="./styles/main.css">
-    <link rel="modulepreload" href="./js/main.js">
 </head>
 <body>
-    <canvas id="webgl-canvas" aria-label="3D Neural Network Visualization"></canvas>
-    <div id="loading" class="loading-screen" role="status" aria-live="polite">
-        <div class="loader" aria-hidden="true"></div>
-        <p>Initializing Neural Network...</p>
+    <canvas id="webgl-canvas"></canvas>
+    
+    <div class="loading-screen" id="loading">
+        <div class="loader"></div>
     </div>
-    <noscript>
-        <div style="position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; color: white;">
-            <h2>JavaScript Required</h2>
-            <p>This visualization requires JavaScript to be enabled.</p>
-        </div>
-    </noscript>
+    
     <script type="module" src="./js/main.js"></script>
 </body>
 </html>
