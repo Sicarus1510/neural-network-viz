@@ -1,10 +1,63 @@
 import * as THREE from 'three';
-import particleVertexShader from '../shaders/vertex/particle.glsl';
-import particleFragmentShader from '../shaders/fragment/particle.glsl';
+
+// Inline shaders to avoid build issues
+const particleVertexShader = /* glsl */`
+attribute vec3 velocity;
+attribute float size;
+attribute float lifetime;
+attribute float phase;
+
+uniform float uTime;
+uniform float uParticleSize;
+uniform vec3 uCameraPosition;
+
+varying vec3 vColor;
+varying float vOpacity;
+
+void main() {
+    vColor = color;
+    vOpacity = smoothstep(0.0, 1.0, lifetime / 10.0);
+    
+    vec3 animatedPosition = position;
+    animatedPosition += sin(uTime * 0.5 + phase) * velocity * 0.5;
+    
+    vec4 mvPosition = modelViewMatrix * vec4(animatedPosition, 1.0);
+    gl_Position = projectionMatrix * mvPosition;
+    
+    float distanceToCamera = length(uCameraPosition - animatedPosition);
+    gl_PointSize = size * uParticleSize * (100.0 / distanceToCamera);
+    gl_PointSize *= (1.0 + 0.3 * sin(uTime * 2.0 + phase));
+    gl_PointSize = clamp(gl_PointSize, 1.0, 20.0);
+}
+`;
+
+const particleFragmentShader = /* glsl */`
+uniform sampler2D uTexture;
+uniform float uGlowIntensity;
+uniform float uTime;
+
+varying vec3 vColor;
+varying float vOpacity;
+
+void main() {
+    vec2 uv = gl_PointCoord;
+    vec4 textureColor = texture2D(uTexture, uv);
+    
+    float distanceToCenter = length(uv - vec2(0.5));
+    float strength = 1.0 - smoothstep(0.0, 0.5, distanceToCenter);
+    float glow = exp(-distanceToCenter * 3.0) * uGlowIntensity;
+    
+    vec3 finalColor = vColor * (strength + glow);
+    float brightness = 1.0 + 0.2 * sin(uTime * 3.0);
+    finalColor *= brightness;
+    
+    gl_FragColor = vec4(finalColor, strength * vOpacity * textureColor.a);
+}
+`;
 
 export class ParticleSystem {
     constructor(scene, nodePositions, particleTexture, params) {
-        this.scene = scene;
+        this.scene = scene; // THIS WAS MISSING!
         this.nodePositions = nodePositions;
         this.particleTexture = particleTexture;
         this.params = params;
@@ -13,11 +66,19 @@ export class ParticleSystem {
         this.particleMaterial = null;
         this.mousePosition = new THREE.Vector2();
         this.burstParticles = [];
+        this.camera = null; // Store camera reference
         
         this.init();
     }
     
     init() {
+        // Find and store camera reference
+        this.camera = this.scene.getObjectByProperty('type', 'PerspectiveCamera');
+        if (!this.camera) {
+            console.error('Camera not found in scene');
+            return;
+        }
+        
         const particleCount = this.params.particleCount;
         
         // Create buffer geometry
@@ -143,6 +204,11 @@ export class ParticleSystem {
     }
     
     triggerBurst(position) {
+        if (!this.burstParticleSystem || !this.burstParticleSystem.geometry) {
+            console.warn('Burst particle system not initialized');
+            return;
+        }
+        
         const positions = this.burstParticleSystem.geometry.attributes.position;
         const velocities = this.burstParticleSystem.geometry.attributes.velocity;
         const lifetimes = this.burstParticleSystem.geometry.attributes.lifetime;
@@ -189,9 +255,11 @@ export class ParticleSystem {
     }
     
     update(elapsedTime, deltaTime) {
+        if (!this.particleMaterial || !this.camera) return;
+        
         // Update main particle system uniforms
         this.particleMaterial.uniforms.uTime.value = elapsedTime;
-        this.particleMaterial.uniforms.uCameraPosition.value.copy(this.scene.getObjectByProperty('type', 'PerspectiveCamera').position);
+        this.particleMaterial.uniforms.uCameraPosition.value.copy(this.camera.position);
         
         // Update particle positions based on velocity
         const positions = this.particleGeometry.attributes.position;
@@ -237,6 +305,8 @@ export class ParticleSystem {
     }
     
     updateBurstParticles(deltaTime) {
+        if (!this.burstParticleSystem || !this.burstParticleSystem.geometry) return;
+        
         const positions = this.burstParticleSystem.geometry.attributes.position;
         const velocities = this.burstParticleSystem.geometry.attributes.velocity;
         const lifetimes = this.burstParticleSystem.geometry.attributes.lifetime;
