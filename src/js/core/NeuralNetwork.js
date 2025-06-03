@@ -1,785 +1,592 @@
 // src/js/core/NeuralNetwork.js
 import * as THREE from 'three';
-import Delaunator from 'delaunator'; // You'll need to install: npm install delaunator
 
 export class NeuralNetwork {
     constructor(scene, params) {
         this.scene = scene;
         this.params = params;
         this.group = new THREE.Group();
-        this.group.name = 'NeuralNetworkGroup';
         
-        // Enhanced structure
-        this.nodes = [];
-        this.edges = [];
-        this.flowPaths = [];
-        this.nodePositions = [];
-        this.pulseWaves = [];
+        // Core structure components
+        this.octagonFrame = null;
+        this.innerCore = null;
+        this.energyChannels = [];
+        this.connectionNodes = [];
+        this.glowPlanes = [];
         
-        // Octagon parameters
-        this.octagonRadius = 8;
-        this.octagonDepth = 2;
-        this.innerRadius = 6;
-        
-        // Flow field parameters
-        this.flowField = null;
-        this.flowFieldSize = 128;
-        this.flowFieldData = null;
+        // Energy flow system
+        this.energyPulses = [];
+        this.flowTexture = null;
+        this.flowRenderTarget = null;
         
         // Animation state
         this.time = 0;
-        this.energyFlow = [];
+        this.clock = new THREE.Clock();
         
-        // Performance
-        this.maxPulseWaves = 10;
-        this.disposed = false;
+        this.init();
     }
     
-    async init() {
-        if (this.disposed) return;
-        
-        try {
-            this.createAdvancedOctagonStructure();
-            this.createFlowField();
-            this.createInternalNetwork();
-            this.createFlowPaths();
-            this.initializeEnergyFlow();
-            this.scene.add(this.group);
-        } catch (error) {
-            console.error('Failed to initialize neural network:', error);
-            throw error;
-        }
+    init() {
+        this.createFlowRenderTarget();
+        this.createCrystallineOctagon();
+        this.createInnerCore();
+        this.createEnergyChannels();
+        this.createConnectionNodes();
+        this.initializeEnergyFlow();
+        this.scene.add(this.group);
     }
     
-    createAdvancedOctagonStructure() {
-        // Create multi-layered octagon with better visual depth
-        const octagonLayers = 3;
-        const layerOffset = 0.3;
-        
-        for (let layer = 0; layer < octagonLayers; layer++) {
-            const scale = 1 - (layer * 0.1);
-            const opacity = 0.8 - (layer * 0.2);
-            
-            // Create octagon ring
-            const geometry = new THREE.BufferGeometry();
-            const vertices = [];
-            const normals = [];
-            const uvs = [];
-            const indices = [];
-            
-            const segments = 8;
-            const angleStep = (Math.PI * 2) / segments;
-            
-            // Create vertices for inner and outer ring
-            for (let i = 0; i <= segments; i++) {
-                const angle = i * angleStep;
-                const cos = Math.cos(angle);
-                const sin = Math.sin(angle);
-                
-                // Outer vertex
-                vertices.push(
-                    cos * this.octagonRadius * scale,
-                    sin * this.octagonRadius * scale,
-                    layer * layerOffset
-                );
-                normals.push(0, 0, 1);
-                uvs.push(i / segments, 1);
-                
-                // Inner vertex
-                vertices.push(
-                    cos * this.innerRadius * scale,
-                    sin * this.innerRadius * scale,
-                    layer * layerOffset
-                );
-                normals.push(0, 0, 1);
-                uvs.push(i / segments, 0);
-            }
-            
-            // Create faces
-            for (let i = 0; i < segments; i++) {
-                const a = i * 2;
-                const b = i * 2 + 1;
-                const c = (i + 1) * 2 + 1;
-                const d = (i + 1) * 2;
-                
-                indices.push(a, b, c);
-                indices.push(a, c, d);
-            }
-            
-            geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
-            geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
-            geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
-            geometry.setIndex(indices);
-            
-            // Create advanced material with custom shader
-            const material = new THREE.ShaderMaterial({
-                uniforms: {
-                    uTime: { value: 0 },
-                    uLayer: { value: layer },
-                    uOpacity: { value: opacity },
-                    uGlowColor: { value: new THREE.Color(0x00ffff) },
-                    uPulseIntensity: { value: 1.0 }
-                },
-                vertexShader: this.getOctagonVertexShader(),
-                fragmentShader: this.getOctagonFragmentShader(),
-                transparent: true,
-                side: THREE.DoubleSide,
-                depthWrite: false,
-                blending: THREE.AdditiveBlending
-            });
-            
-            const mesh = new THREE.Mesh(geometry, material);
-            mesh.name = `OctagonLayer_${layer}`;
-            this.group.add(mesh);
-        }
-        
-        // Store octagon vertices for connection points
-        this.octagonVertices = [];
-        for (let i = 0; i < 8; i++) {
-            const angle = i * (Math.PI * 2) / 8;
-            this.octagonVertices.push(new THREE.Vector3(
-                Math.cos(angle) * this.octagonRadius,
-                Math.sin(angle) * this.octagonRadius,
-                0
-            ));
-        }
-    }
-    
-    createFlowField() {
-        // Create a flow field texture for guiding particle movement
-        const size = this.flowFieldSize;
-        this.flowFieldData = new Float32Array(size * size * 4);
-        
-        // Generate flow field based on octagonal structure
-        for (let y = 0; y < size; y++) {
-            for (let x = 0; x < size; x++) {
-                const u = (x / size) * 2 - 1;
-                const v = (y / size) * 2 - 1;
-                
-                // Convert to world coordinates
-                const wx = u * this.octagonRadius * 1.5;
-                const wy = v * this.octagonRadius * 1.5;
-                
-                // Calculate flow direction based on octagonal shape
-                const angle = Math.atan2(wy, wx);
-                const distance = Math.sqrt(wx * wx + wy * wy);
-                
-                // Create circular flow with octagonal influence
-                let flowX = -Math.sin(angle);
-                let flowY = Math.cos(angle);
-                
-                // Add turbulence
-                const turbulence = this.noise2D(wx * 0.1, wy * 0.1) * 0.5;
-                flowX += Math.cos(turbulence * Math.PI * 2) * 0.3;
-                flowY += Math.sin(turbulence * Math.PI * 2) * 0.3;
-                
-                // Normalize and apply strength based on distance
-                const length = Math.sqrt(flowX * flowX + flowY * flowY);
-                if (length > 0) {
-                    flowX /= length;
-                    flowY /= length;
-                }
-                
-                const strength = Math.min(1, distance / this.octagonRadius);
-                
-                const idx = (y * size + x) * 4;
-                this.flowFieldData[idx] = flowX * strength;
-                this.flowFieldData[idx + 1] = flowY * strength;
-                this.flowFieldData[idx + 2] = 0;
-                this.flowFieldData[idx + 3] = strength;
-            }
-        }
-        
-        // Create texture from flow field data
-        this.flowField = new THREE.DataTexture(
-            this.flowFieldData,
-            size,
-            size,
-            THREE.RGBAFormat,
-            THREE.FloatType
-        );
-        this.flowField.needsUpdate = true;
-    }
-    
-    createInternalNetwork() {
-        // Generate sophisticated internal network using Delaunay triangulation
-        const points = [];
-        const nodeCount = Math.min(Math.floor(this.params.particleCount / 20), 200);
-        
-        // Generate points using multiple strategies for interesting distribution
-        
-        // 1. Concentric rings
-        const rings = 4;
-        for (let ring = 1; ring <= rings; ring++) {
-            const radius = (ring / rings) * this.innerRadius;
-            const pointsInRing = ring * 8;
-            for (let i = 0; i < pointsInRing; i++) {
-                const angle = (i / pointsInRing) * Math.PI * 2;
-                const jitter = (Math.random() - 0.5) * 0.5;
-                points.push([
-                    Math.cos(angle + jitter) * radius,
-                    Math.sin(angle + jitter) * radius
-                ]);
-            }
-        }
-        
-        // 2. Strategic points at octagon vertices projections
-        this.octagonVertices.forEach(vertex => {
-            points.push([vertex.x * 0.7, vertex.y * 0.7]);
-            points.push([vertex.x * 0.4, vertex.y * 0.4]);
-        });
-        
-        // 3. Random points within octagon bounds
-        for (let i = 0; i < nodeCount / 2; i++) {
-            const angle = Math.random() * Math.PI * 2;
-            const radius = Math.random() * this.innerRadius * 0.8;
-            const x = Math.cos(angle) * radius;
-            const y = Math.sin(angle) * radius;
-            
-            if (this.isInsideOctagon(new THREE.Vector3(x, y, 0))) {
-                points.push([x, y]);
-            }
-        }
-        
-        // Perform Delaunay triangulation
-        const delaunay = new Delaunator(points.flat());
-        const triangles = delaunay.triangles;
-        
-        // Create nodes at unique positions
-        const uniquePositions = new Map();
-        points.forEach((point, index) => {
-            const key = `${point[0].toFixed(3)},${point[1].toFixed(3)}`;
-            if (!uniquePositions.has(key)) {
-                uniquePositions.set(key, {
-                    position: new THREE.Vector3(point[0], point[1], (Math.random() - 0.5) * 0.5),
-                    index: index
-                });
-            }
-        });
-        
-        // Create sophisticated nodes
-        uniquePositions.forEach((data, key) => {
-            this.createAdvancedNode(data.position, data.index);
-            this.nodePositions.push(data.position);
-        });
-        
-        // Create edges from Delaunay triangulation
-        const edgeSet = new Set();
-        for (let i = 0; i < triangles.length; i += 3) {
-            for (let j = 0; j < 3; j++) {
-                const a = triangles[i + j];
-                const b = triangles[i + ((j + 1) % 3)];
-                const edge = [Math.min(a, b), Math.max(a, b)].join('-');
-                edgeSet.add(edge);
-            }
-        }
-        
-        // Create edge geometries with flow information
-        edgeSet.forEach(edge => {
-            const [a, b] = edge.split('-').map(Number);
-            if (points[a] && points[b]) {
-                const start = new THREE.Vector3(points[a][0], points[a][1], 0);
-                const end = new THREE.Vector3(points[b][0], points[b][1], 0);
-                this.createFlowEdge(start, end);
-            }
+    createFlowRenderTarget() {
+        // Create render target for flow visualization
+        this.flowRenderTarget = new THREE.WebGLRenderTarget(1024, 1024, {
+            minFilter: THREE.LinearFilter,
+            magFilter: THREE.LinearFilter,
+            format: THREE.RGBAFormat,
+            type: THREE.FloatType
         });
     }
     
-    createAdvancedNode(position, index) {
-        // Create node with multiple visual layers
-        const nodeGroup = new THREE.Group();
+    createCrystallineOctagon() {
+        // Create the main octagonal crystalline structure
+        const octagonGeometry = new THREE.CylinderGeometry(8, 8, 0.5, 8, 1, false);
         
-        // Core sphere
-        const coreGeometry = new THREE.SphereGeometry(0.15, 32, 32);
-        const coreMaterial = new THREE.ShaderMaterial({
+        // Custom shader for glass-like crystalline effect
+        const crystalMaterial = new THREE.ShaderMaterial({
             uniforms: {
                 uTime: { value: 0 },
-                uPulsePhase: { value: Math.random() * Math.PI * 2 },
-                uCoreColor: { value: new THREE.Color(0xffffff) },
-                uGlowColor: { value: new THREE.Color(0x00ffff) },
-                uIntensity: { value: 1.0 }
+                uRefractPower: { value: 0.3 },
+                uChromaticAberration: { value: 0.2 },
+                uSaturation: { value: 1.2 },
+                uShininess: { value: 40.0 },
+                uDiffuseness: { value: 0.2 },
+                uFresnelPower: { value: 8.0 },
+                uEnvMap: { value: null },
+                uFlowTexture: { value: null },
+                uCameraPosition: { value: new THREE.Vector3() }
             },
-            vertexShader: this.getNodeVertexShader(),
-            fragmentShader: this.getNodeFragmentShader(),
+            vertexShader: `
+                varying vec3 vNormal;
+                varying vec3 vPosition;
+                varying vec3 vWorldPosition;
+                varying vec2 vUv;
+                varying vec3 vReflect;
+                varying vec3 vRefract[3];
+                varying float vReflectionFactor;
+                
+                uniform float uRefractPower;
+                uniform float uFresnelPower;
+                uniform float uChromaticAberration;
+                
+                void main() {
+                    vUv = uv;
+                    vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+                    vWorldPosition = worldPosition.xyz;
+                    vPosition = position;
+                    
+                    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+                    vec3 worldNormal = normalize(mat3(modelMatrix) * normal);
+                    vNormal = worldNormal;
+                    
+                    // Calculate reflection and refraction vectors
+                    vec3 cameraToVertex = normalize(worldPosition.xyz - cameraPosition);
+                    vReflect = reflect(cameraToVertex, worldNormal);
+                    
+                    // Chromatic aberration for refraction
+                    float ior = 1.0 / 1.31;
+                    vRefract[0] = refract(cameraToVertex, worldNormal, ior * (1.0 - uChromaticAberration));
+                    vRefract[1] = refract(cameraToVertex, worldNormal, ior);
+                    vRefract[2] = refract(cameraToVertex, worldNormal, ior * (1.0 + uChromaticAberration));
+                    
+                    // Fresnel
+                    float fresnelFactor = pow(1.0 - dot(-cameraToVertex, worldNormal), uFresnelPower);
+                    vReflectionFactor = clamp(fresnelFactor, 0.0, 1.0);
+                    
+                    gl_Position = projectionMatrix * mvPosition;
+                }
+            `,
+            fragmentShader: `
+                uniform float uTime;
+                uniform float uSaturation;
+                uniform float uShininess;
+                uniform float uDiffuseness;
+                uniform samplerCube uEnvMap;
+                uniform sampler2D uFlowTexture;
+                uniform vec3 uCameraPosition;
+                
+                varying vec3 vNormal;
+                varying vec3 vPosition;
+                varying vec3 vWorldPosition;
+                varying vec2 vUv;
+                varying vec3 vReflect;
+                varying vec3 vRefract[3];
+                varying float vReflectionFactor;
+                
+                vec3 czm_saturation(vec3 rgb, float adjustment) {
+                    const vec3 W = vec3(0.2125, 0.7154, 0.0721);
+                    vec3 intensity = vec3(dot(rgb, W));
+                    return mix(intensity, rgb, adjustment);
+                }
+                
+                void main() {
+                    // Sample environment for reflections
+                    vec3 reflection = vec3(0.0);
+                    if (uEnvMap != null) {
+                        reflection = textureCube(uEnvMap, vReflect).rgb;
+                    }
+                    
+                    // Sample environment for refractions with chromatic aberration
+                    vec3 refraction = vec3(0.0);
+                    if (uEnvMap != null) {
+                        refraction.r = textureCube(uEnvMap, vRefract[0]).r;
+                        refraction.g = textureCube(uEnvMap, vRefract[1]).g;
+                        refraction.b = textureCube(uEnvMap, vRefract[2]).b;
+                    }
+                    
+                    // Mix reflection and refraction
+                    vec3 color = mix(refraction, reflection, vReflectionFactor);
+                    
+                    // Add internal glow from flow texture
+                    vec2 flowUv = vUv;
+                    flowUv.x += sin(uTime * 0.5) * 0.01;
+                    vec3 flowColor = texture2D(uFlowTexture, flowUv).rgb;
+                    color += flowColor * 0.5;
+                    
+                    // Edge glow
+                    float edgeFactor = pow(1.0 - abs(dot(vNormal, normalize(uCameraPosition - vWorldPosition))), 2.0);
+                    vec3 edgeGlow = vec3(0.0, 0.8, 1.0) * edgeFactor * 2.0;
+                    color += edgeGlow;
+                    
+                    // Saturation adjustment
+                    color = czm_saturation(color, uSaturation);
+                    
+                    // Inner light
+                    float innerLight = smoothstep(0.0, 1.0, 1.0 - length(vPosition.xy) / 8.0);
+                    color += vec3(0.0, 0.5, 1.0) * innerLight * 0.3;
+                    
+                    gl_FragColor = vec4(color, 0.9);
+                }
+            `,
             transparent: true,
+            side: THREE.DoubleSide,
             depthWrite: false
         });
         
-        const core = new THREE.Mesh(coreGeometry, coreMaterial);
-        nodeGroup.add(core);
+        // Create the octagon frame
+        this.octagonFrame = new THREE.Mesh(octagonGeometry, crystalMaterial);
+        this.octagonFrame.rotation.y = Math.PI / 8; // Align octagon
+        this.group.add(this.octagonFrame);
         
-        // Outer glow sphere
-        const glowGeometry = new THREE.SphereGeometry(0.3, 16, 16);
+        // Add wireframe overlay for structure
+        const wireframeGeometry = new THREE.EdgesGeometry(octagonGeometry);
+        const wireframeMaterial = new THREE.LineBasicMaterial({
+            color: 0x00ffff,
+            linewidth: 2,
+            transparent: true,
+            opacity: 0.6
+        });
+        const wireframe = new THREE.LineSegments(wireframeGeometry, wireframeMaterial);
+        wireframe.rotation.y = Math.PI / 8;
+        this.group.add(wireframe);
+        
+        // Add glow planes at each face
+        for (let i = 0; i < 8; i++) {
+            const angle = (i * Math.PI * 2) / 8;
+            const planeGeometry = new THREE.PlaneGeometry(7, 0.5);
+            const planeMaterial = new THREE.ShaderMaterial({
+                uniforms: {
+                    uTime: { value: 0 },
+                    uIntensity: { value: 1.0 },
+                    uColor: { value: new THREE.Color(0x00ffff) }
+                },
+                vertexShader: `
+                    varying vec2 vUv;
+                    void main() {
+                        vUv = uv;
+                        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                    }
+                `,
+                fragmentShader: `
+                    uniform float uTime;
+                    uniform float uIntensity;
+                    uniform vec3 uColor;
+                    varying vec2 vUv;
+                    
+                    void main() {
+                        float glow = smoothstep(0.0, 0.5, vUv.x) * smoothstep(1.0, 0.5, vUv.x);
+                        glow *= smoothstep(0.0, 0.2, vUv.y) * smoothstep(1.0, 0.8, vUv.y);
+                        
+                        float pulse = sin(uTime * 3.0 + vUv.x * 10.0) * 0.5 + 0.5;
+                        glow *= (0.5 + pulse * 0.5);
+                        
+                        vec3 color = uColor * glow * uIntensity;
+                        gl_FragColor = vec4(color, glow * 0.5);
+                    }
+                `,
+                transparent: true,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false,
+                side: THREE.DoubleSide
+            });
+            
+            const plane = new THREE.Mesh(planeGeometry, planeMaterial);
+            plane.position.set(
+                Math.cos(angle) * 8,
+                0,
+                Math.sin(angle) * 8
+            );
+            plane.lookAt(new THREE.Vector3(0, 0, 0));
+            this.glowPlanes.push(plane);
+            this.group.add(plane);
+        }
+    }
+    
+    createInnerCore() {
+        // Create the bright central core
+        const coreGeometry = new THREE.IcosahedronGeometry(1.5, 3);
+        const coreMaterial = new THREE.ShaderMaterial({
+            uniforms: {
+                uTime: { value: 0 },
+                uIntensity: { value: 2.0 }
+            },
+            vertexShader: `
+                varying vec3 vNormal;
+                varying vec3 vPosition;
+                
+                void main() {
+                    vNormal = normalize(normalMatrix * normal);
+                    vPosition = position;
+                    
+                    float breathing = sin(uTime * 2.0) * 0.1 + 1.0;
+                    vec3 pos = position * breathing;
+                    
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+                }
+            `,
+            fragmentShader: `
+                uniform float uTime;
+                uniform float uIntensity;
+                
+                varying vec3 vNormal;
+                varying vec3 vPosition;
+                
+                void main() {
+                    float fresnel = pow(1.0 - abs(dot(vNormal, vec3(0.0, 0.0, 1.0))), 2.0);
+                    
+                    vec3 coreColor = vec3(1.0, 1.0, 1.0);
+                    vec3 glowColor = vec3(0.0, 0.8, 1.0);
+                    
+                    vec3 color = mix(coreColor, glowColor, fresnel) * uIntensity;
+                    
+                    float pulse = sin(uTime * 3.0) * 0.3 + 1.0;
+                    color *= pulse;
+                    
+                    gl_FragColor = vec4(color, 1.0);
+                }
+            `,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false
+        });
+        
+        this.innerCore = new THREE.Mesh(coreGeometry, coreMaterial);
+        this.group.add(this.innerCore);
+        
+        // Add outer glow sphere
+        const glowGeometry = new THREE.SphereGeometry(3, 32, 32);
         const glowMaterial = new THREE.ShaderMaterial({
             uniforms: {
-                uTime: { value: 0 },
-                uIntensity: { value: 0.5 },
-                uColor: { value: new THREE.Color(0x00ffff) }
+                uTime: { value: 0 }
             },
-            vertexShader: this.getGlowVertexShader(),
-            fragmentShader: this.getGlowFragmentShader(),
+            vertexShader: `
+                varying vec3 vNormal;
+                void main() {
+                    vNormal = normalize(normalMatrix * normal);
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                }
+            `,
+            fragmentShader: `
+                uniform float uTime;
+                varying vec3 vNormal;
+                
+                void main() {
+                    float intensity = pow(0.8 - dot(vNormal, vec3(0.0, 0.0, 1.0)), 3.0);
+                    vec3 color = vec3(0.0, 0.6, 1.0) * intensity;
+                    
+                    float pulse = sin(uTime * 2.0) * 0.2 + 0.8;
+                    color *= pulse;
+                    
+                    gl_FragColor = vec4(color, intensity * 0.5);
+                }
+            `,
             transparent: true,
+            blending: THREE.AdditiveBlending,
             depthWrite: false,
-            side: THREE.BackSide,
-            blending: THREE.AdditiveBlending
+            side: THREE.BackSide
         });
         
-        const glow = new THREE.Mesh(glowGeometry, glowMaterial);
-        nodeGroup.add(glow);
-        
-        nodeGroup.position.copy(position);
-        nodeGroup.userData = {
-            nodeId: `node_${index}`,
-            baseIntensity: 0.5 + Math.random() * 0.5,
-            pulsePhase: Math.random() * Math.PI * 2,
-            connections: [],
-            flowStrength: 0,
-            core: core,
-            glow: glow
-        };
-        
-        this.nodes.push(nodeGroup);
-        this.group.add(nodeGroup);
+        const glowSphere = new THREE.Mesh(glowGeometry, glowMaterial);
+        this.group.add(glowSphere);
     }
     
-    createFlowEdge(start, end) {
-        // Create sophisticated edge with flow visualization
-        const direction = new THREE.Vector3().subVectors(end, start);
-        const length = direction.length();
-        direction.normalize();
+    createEnergyChannels() {
+        // Create flowing energy channels within the octagon
+        const channelCount = 16;
         
-        // Create tube geometry for better visuals
-        const curve = new THREE.CatmullRomCurve3([
-            start,
-            new THREE.Vector3().lerpVectors(start, end, 0.5).add(
-                new THREE.Vector3(
-                    (Math.random() - 0.5) * 0.3,
-                    (Math.random() - 0.5) * 0.3,
-                    (Math.random() - 0.5) * 0.1
-                )
-            ),
-            end
-        ]);
-        
-        const tubeGeometry = new THREE.TubeGeometry(curve, 16, 0.02, 8, false);
-        const tubeMaterial = new THREE.ShaderMaterial({
-            uniforms: {
-                uTime: { value: 0 },
-                uFlowSpeed: { value: 1.0 + Math.random() },
-                uFlowDirection: { value: direction },
-                uLength: { value: length },
-                uOpacity: { value: 0.6 },
-                uColor: { value: new THREE.Color(0x00ccff) }
-            },
-            vertexShader: this.getEdgeVertexShader(),
-            fragmentShader: this.getEdgeFragmentShader(),
-            transparent: true,
-            depthWrite: false,
-            blending: THREE.AdditiveBlending
-        });
-        
-        const edge = new THREE.Mesh(tubeGeometry, tubeMaterial);
-        edge.userData = {
-            start: start.clone(),
-            end: end.clone(),
-            curve: curve,
-            baseOpacity: 0.3 + Math.random() * 0.3
-        };
-        
-        this.edges.push(edge);
-        this.group.add(edge);
-        
-        // Store flow path for particles
-        this.flowPaths.push({
-            curve: curve,
-            direction: direction,
-            length: length
-        });
-    }
-    
-    createFlowPaths() {
-        // Create main flow paths along octagon edges
-        for (let i = 0; i < this.octagonVertices.length; i++) {
-            const current = this.octagonVertices[i];
-            const next = this.octagonVertices[(i + 1) % this.octagonVertices.length];
+        for (let i = 0; i < channelCount; i++) {
+            const angle1 = (i / channelCount) * Math.PI * 2;
+            const angle2 = ((i + Math.floor(channelCount * 0.3)) % channelCount) / channelCount * Math.PI * 2;
             
-            const curve = new THREE.CatmullRomCurve3([
-                current,
-                new THREE.Vector3().lerpVectors(current, next, 0.5).add(
-                    new THREE.Vector3(0, 0, Math.sin(i * 0.5) * 0.5)
-                ),
-                next
-            ]);
+            const start = new THREE.Vector3(
+                Math.cos(angle1) * 6,
+                (Math.random() - 0.5) * 0.3,
+                Math.sin(angle1) * 6
+            );
             
-            this.flowPaths.push({
-                curve: curve,
-                direction: new THREE.Vector3().subVectors(next, current).normalize(),
-                length: current.distanceTo(next),
-                isMain: true
+            const end = new THREE.Vector3(
+                Math.cos(angle2) * 6,
+                (Math.random() - 0.5) * 0.3,
+                Math.sin(angle2) * 6
+            );
+            
+            const middle = new THREE.Vector3()
+                .lerpVectors(start, end, 0.5)
+                .multiplyScalar(0.7);
+            
+            const curve = new THREE.QuadraticBezierCurve3(start, middle, end);
+            const tubeGeometry = new THREE.TubeGeometry(curve, 32, 0.05, 8, false);
+            
+            const channelMaterial = new THREE.ShaderMaterial({
+                uniforms: {
+                    uTime: { value: 0 },
+                    uFlowSpeed: { value: 2.0 + Math.random() },
+                    uColor: { value: new THREE.Color(0x00ffff) }
+                },
+                vertexShader: `
+                    varying vec2 vUv;
+                    void main() {
+                        vUv = uv;
+                        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                    }
+                `,
+                fragmentShader: `
+                    uniform float uTime;
+                    uniform float uFlowSpeed;
+                    uniform vec3 uColor;
+                    varying vec2 vUv;
+                    
+                    void main() {
+                        float flow = fract(vUv.x * 3.0 - uTime * uFlowSpeed);
+                        flow = smoothstep(0.0, 0.1, flow) * smoothstep(1.0, 0.6, flow);
+                        
+                        vec3 color = uColor * flow * 2.0;
+                        float alpha = flow * 0.8;
+                        
+                        gl_FragColor = vec4(color, alpha);
+                    }
+                `,
+                transparent: true,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false
             });
+            
+            const channel = new THREE.Mesh(tubeGeometry, channelMaterial);
+            this.energyChannels.push({
+                mesh: channel,
+                curve: curve,
+                material: channelMaterial
+            });
+            this.group.add(channel);
         }
+    }
+    
+    createConnectionNodes() {
+        // Create glowing connection nodes at key points
+        const nodePositions = [];
+        
+        // Nodes at octagon vertices
+        for (let i = 0; i < 8; i++) {
+            const angle = (i * Math.PI * 2) / 8;
+            nodePositions.push(new THREE.Vector3(
+                Math.cos(angle) * 8,
+                0,
+                Math.sin(angle) * 8
+            ));
+        }
+        
+        // Inner ring nodes
+        for (let i = 0; i < 8; i++) {
+            const angle = (i * Math.PI * 2) / 8 + Math.PI / 8;
+            nodePositions.push(new THREE.Vector3(
+                Math.cos(angle) * 4,
+                0,
+                Math.sin(angle) * 4
+            ));
+        }
+        
+        nodePositions.forEach(pos => {
+            const nodeGeometry = new THREE.SphereGeometry(0.2, 16, 16);
+            const nodeMaterial = new THREE.ShaderMaterial({
+                uniforms: {
+                    uTime: { value: 0 },
+                    uIntensity: { value: 1.0 + Math.random() }
+                },
+                vertexShader: `
+                    varying vec3 vNormal;
+                    void main() {
+                        vNormal = normal;
+                        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                    }
+                `,
+                fragmentShader: `
+                    uniform float uTime;
+                    uniform float uIntensity;
+                    varying vec3 vNormal;
+                    
+                    void main() {
+                        float fresnel = pow(1.0 - abs(dot(vNormal, vec3(0.0, 0.0, 1.0))), 1.5);
+                        vec3 color = vec3(0.0, 0.8, 1.0) * fresnel * uIntensity;
+                        
+                        float pulse = sin(uTime * 4.0 + gl_FragCoord.x * 0.01) * 0.5 + 1.0;
+                        color *= pulse;
+                        
+                        gl_FragColor = vec4(color, 1.0);
+                    }
+                `,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false
+            });
+            
+            const node = new THREE.Mesh(nodeGeometry, nodeMaterial);
+            node.position.copy(pos);
+            
+            this.connectionNodes.push({
+                mesh: node,
+                position: pos,
+                material: nodeMaterial
+            });
+            this.group.add(node);
+        });
     }
     
     initializeEnergyFlow() {
-        // Initialize energy packets that flow through the network
-        const energyCount = 20;
-        
-        for (let i = 0; i < energyCount; i++) {
-            const pathIndex = Math.floor(Math.random() * this.flowPaths.length);
-            const path = this.flowPaths[pathIndex];
-            
-            this.energyFlow.push({
-                path: path,
-                progress: Math.random(),
-                speed: 0.2 + Math.random() * 0.3,
-                intensity: 0.5 + Math.random() * 0.5,
-                color: new THREE.Color().setHSL(Math.random() * 0.1 + 0.5, 1.0, 0.5)
-            });
-        }
-    }
-    
-    // Shader functions
-    getOctagonVertexShader() {
-        return /* glsl */`
-            uniform float uTime;
-            uniform float uLayer;
-            
-            varying vec2 vUv;
-            varying vec3 vPosition;
-            varying float vDistortion;
-            
-            void main() {
-                vUv = uv;
-                vPosition = position;
-                
-                // Add wave distortion
-                float distortion = sin(position.x * 2.0 + uTime) * 0.02;
-                distortion += cos(position.y * 2.0 + uTime * 1.3) * 0.02;
-                vDistortion = distortion;
-                
-                vec3 pos = position;
-                pos.z += distortion * (1.0 - uLayer * 0.3);
-                
-                gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+        // Initialize energy pulses that flow through channels
+        this.energyChannels.forEach(channel => {
+            for (let i = 0; i < 3; i++) {
+                this.energyPulses.push({
+                    channel: channel,
+                    progress: Math.random(),
+                    speed: 0.3 + Math.random() * 0.2,
+                    intensity: 0.5 + Math.random() * 0.5
+                });
             }
-        `;
-    }
-    
-    getOctagonFragmentShader() {
-        return /* glsl */`
-            uniform float uTime;
-            uniform float uOpacity;
-            uniform vec3 uGlowColor;
-            uniform float uPulseIntensity;
-            
-            varying vec2 vUv;
-            varying vec3 vPosition;
-            varying float vDistortion;
-            
-            void main() {
-                // Create gradient from inner to outer edge
-                float gradient = smoothstep(0.0, 1.0, vUv.y);
-                
-                // Add pulsing effect
-                float pulse = sin(uTime * 2.0) * 0.5 + 0.5;
-                
-                // Calculate distance-based glow
-                float distanceFromCenter = length(vPosition.xy);
-                float glow = 1.0 / (1.0 + distanceFromCenter * 0.1);
-                
-                // Combine effects
-                vec3 color = mix(uGlowColor, vec3(1.0), gradient * 0.5);
-                color *= (1.0 + pulse * uPulseIntensity);
-                color += uGlowColor * glow * 0.3;
-                
-                // Apply distortion to alpha
-                float alpha = uOpacity * gradient * (1.0 + vDistortion * 5.0);
-                alpha *= (0.8 + pulse * 0.2);
-                
-                gl_FragColor = vec4(color, alpha);
-            }
-        `;
-    }
-    
-    getNodeVertexShader() {
-        return /* glsl */`
-            uniform float uTime;
-            uniform float uPulsePhase;
-            
-            varying vec3 vNormal;
-            varying vec3 vViewPosition;
-            varying float vPulse;
-            
-            void main() {
-                vNormal = normalize(normalMatrix * normal);
-                
-                // Calculate pulse
-                vPulse = sin(uTime * 3.0 + uPulsePhase) * 0.5 + 0.5;
-                
-                // Animate vertex positions
-                vec3 pos = position;
-                pos *= 1.0 + vPulse * 0.1;
-                
-                vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
-                vViewPosition = mvPosition.xyz;
-                
-                gl_Position = projectionMatrix * mvPosition;
-            }
-        `;
-    }
-    
-    getNodeFragmentShader() {
-        return /* glsl */`
-            uniform float uTime;
-            uniform vec3 uCoreColor;
-            uniform vec3 uGlowColor;
-            uniform float uIntensity;
-            
-            varying vec3 vNormal;
-            varying vec3 vViewPosition;
-            varying float vPulse;
-            
-            void main() {
-                // Fresnel effect
-                vec3 viewDir = normalize(-vViewPosition);
-                float fresnel = 1.0 - max(dot(viewDir, vNormal), 0.0);
-                fresnel = pow(fresnel, 2.0);
-                
-                // Core color with glow
-                vec3 color = mix(uCoreColor, uGlowColor, fresnel);
-                color *= uIntensity * (1.0 + vPulse);
-                
-                // Add bright center
-                float centerGlow = 1.0 - length(gl_PointCoord - vec2(0.5)) * 2.0;
-                centerGlow = max(0.0, centerGlow);
-                color += uCoreColor * centerGlow * 2.0;
-                
-                float alpha = (fresnel * 0.5 + 0.5) * uIntensity;
-                
-                gl_FragColor = vec4(color, alpha);
-            }
-        `;
-    }
-    
-    getGlowVertexShader() {
-        return /* glsl */`
-            varying vec3 vNormal;
-            varying vec3 vPosition;
-            
-            void main() {
-                vNormal = normalize(normalMatrix * normal);
-                vPosition = position;
-                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-            }
-        `;
-    }
-    
-    getGlowFragmentShader() {
-        return /* glsl */`
-            uniform float uTime;
-            uniform float uIntensity;
-            uniform vec3 uColor;
-            
-            varying vec3 vNormal;
-            varying vec3 vPosition;
-            
-            void main() {
-                float alpha = 1.0 - length(vPosition) / 0.3;
-                alpha = pow(alpha, 3.0) * uIntensity;
-                
-                vec3 color = uColor * (1.0 + sin(uTime * 2.0) * 0.2);
-                
-                gl_FragColor = vec4(color, alpha);
-            }
-        `;
-    }
-    
-    getEdgeVertexShader() {
-        return /* glsl */`
-            uniform float uTime;
-            uniform float uFlowSpeed;
-            uniform float uLength;
-            
-            attribute float vertexDistance;
-            
-            varying float vProgress;
-            varying vec3 vPosition;
-            
-            void main() {
-                vPosition = position;
-                vProgress = position.x / uLength;
-                
-                // Add flow animation
-                vec3 pos = position;
-                float wave = sin(vProgress * 10.0 - uTime * uFlowSpeed) * 0.02;
-                pos.y += wave;
-                pos.z += wave * 0.5;
-                
-                gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
-            }
-        `;
-    }
-    
-    getEdgeFragmentShader() {
-        return /* glsl */`
-            uniform float uTime;
-            uniform float uOpacity;
-            uniform vec3 uColor;
-            uniform float uFlowSpeed;
-            
-            varying float vProgress;
-            varying vec3 vPosition;
-            
-            void main() {
-                // Create flowing effect
-                float flow = fract(vProgress * 5.0 - uTime * uFlowSpeed);
-                flow = smoothstep(0.0, 0.1, flow) * smoothstep(1.0, 0.9, flow);
-                
-                // Add glow
-                float glow = sin(vProgress * 20.0 - uTime * uFlowSpeed * 4.0) * 0.5 + 0.5;
-                
-                vec3 color = uColor * (1.0 + glow * 0.5);
-                float alpha = uOpacity * (0.5 + flow * 0.5);
-                
-                gl_FragColor = vec4(color, alpha);
-            }
-        `;
-    }
-    
-    // Utility functions
-    noise2D(x, y) {
-        // Simple 2D noise function for flow field generation
-        return Math.sin(x * 12.9898 + y * 78.233) * 43758.5453 % 1;
-    }
-    
-    isInsideOctagon(position) {
-        // Check if position is inside octagon boundary
-        const angle = Math.atan2(position.y, position.x);
-        const segmentAngle = Math.PI / 4;
-        const segment = Math.floor((angle + Math.PI) / segmentAngle);
-        const localAngle = (angle + Math.PI) % segmentAngle - segmentAngle / 2;
-        
-        const maxRadius = this.octagonRadius / Math.cos(localAngle);
-        const distance = Math.sqrt(position.x * position.x + position.y * position.y);
-        
-        return distance <= maxRadius * 0.95;
+        });
     }
     
     update(elapsedTime, deltaTime) {
-        if (this.disposed) return;
-        
         this.time = elapsedTime;
         
-        // Update all shader uniforms
-        this.group.traverse((child) => {
-            if (child.material && child.material.uniforms) {
-                if (child.material.uniforms.uTime) {
-                    child.material.uniforms.uTime.value = elapsedTime;
-                }
+        // Update all materials
+        if (this.octagonFrame && this.octagonFrame.material.uniforms) {
+            this.octagonFrame.material.uniforms.uTime.value = elapsedTime;
+            
+            const camera = this.scene.getObjectByProperty('type', 'PerspectiveCamera');
+            if (camera) {
+                this.octagonFrame.material.uniforms.uCameraPosition.value.copy(camera.position);
             }
-        });
-        
-        // Update nodes with more sophisticated animation
-        this.nodes.forEach((nodeGroup, index) => {
-            const userData = nodeGroup.userData;
-            
-            // Calculate node activity based on connections
-            let activity = userData.baseIntensity;
-            
-            // Check for nearby pulse waves
-            this.pulseWaves.forEach(wave => {
-                const distance = nodeGroup.position.distanceTo(wave.origin);
-                if (distance < wave.radius && distance > wave.radius - 2) {
-                    activity += wave.intensity * (1 - (distance - wave.radius + 2) / 2);
-                }
-            });
-            
-            // Update node materials
-            if (userData.core && userData.core.material.uniforms.uIntensity) {
-                userData.core.material.uniforms.uIntensity.value = 
-                    Math.min(2, activity * this.params.glowIntensity);
-            }
-            
-            if (userData.glow && userData.glow.material.uniforms.uIntensity) {
-                userData.glow.material.uniforms.uIntensity.value = 
-                    Math.min(1, activity * this.params.glowIntensity * 0.5);
-            }
-            
-            // Subtle floating animation
-            const floatY = Math.sin(elapsedTime * 0.5 + userData.pulsePhase) * 0.05;
-            const floatX = Math.cos(elapsedTime * 0.3 + userData.pulsePhase) * 0.03;
-            nodeGroup.position.y = nodeGroup.userData.originalPosition?.y || 0 + floatY;
-            nodeGroup.position.x = (nodeGroup.userData.originalPosition?.x || 0) + floatX;
-        });
-        
-        // Update energy flow
-        this.energyFlow.forEach(energy => {
-            energy.progress += energy.speed * deltaTime;
-            if (energy.progress > 1) {
-                energy.progress = 0;
-                // Switch to a different path occasionally
-                if (Math.random() < 0.3) {
-                    energy.path = this.flowPaths[
-                        Math.floor(Math.random() * this.flowPaths.length)
-                    ];
-                }
-            }
-        });
-        
-        // Update pulse waves
-        this.pulseWaves = this.pulseWaves.filter(wave => {
-            wave.radius += wave.speed * deltaTime;
-            wave.life -= deltaTime;
-            wave.intensity = Math.max(0, wave.life / 3);
-            return wave.life > 0;
-        });
-        
-        // Overall structure animation
-        this.group.rotation.z += deltaTime * this.params.rotationSpeed * 0.1;
-        
-        // Breathing effect
-        const breathe = Math.sin(elapsedTime * 0.3) * 0.02 + 1;
-        this.group.scale.setScalar(this.params.networkScale * breathe);
-    }
-    
-    triggerPulse(origin) {
-        if (this.pulseWaves.length >= this.maxPulseWaves) {
-            this.pulseWaves.shift();
         }
         
-        this.pulseWaves.push({
-            origin: origin.clone(),
-            radius: 0,
-            speed: 8,
-            intensity: 1.5,
-            life: 4
+        // Update inner core
+        if (this.innerCore && this.innerCore.material.uniforms) {
+            this.innerCore.material.uniforms.uTime.value = elapsedTime;
+        }
+        
+        // Update glow planes
+        this.glowPlanes.forEach(plane => {
+            if (plane.material.uniforms) {
+                plane.material.uniforms.uTime.value = elapsedTime;
+            }
         });
+        
+        // Update energy channels
+        this.energyChannels.forEach(channel => {
+            if (channel.material.uniforms) {
+                channel.material.uniforms.uTime.value = elapsedTime;
+            }
+        });
+        
+        // Update connection nodes
+        this.connectionNodes.forEach(node => {
+            if (node.material.uniforms) {
+                node.material.uniforms.uTime.value = elapsedTime;
+            }
+            
+            // Gentle floating animation
+            node.mesh.position.y = node.position.y + Math.sin(elapsedTime * 2 + node.position.x) * 0.05;
+        });
+        
+        // Update energy pulses
+        this.energyPulses.forEach(pulse => {
+            pulse.progress += pulse.speed * deltaTime;
+            if (pulse.progress > 1) {
+                pulse.progress = 0;
+                pulse.intensity = 0.5 + Math.random() * 0.5;
+            }
+        });
+        
+        // Rotate the entire structure
+        this.group.rotation.y += deltaTime * this.params.rotationSpeed * 0.1;
+        
+        // Subtle breathing animation
+        const breathing = Math.sin(elapsedTime * 0.5) * 0.02 + 1.0;
+        this.group.scale.setScalar(this.params.networkScale * breathing);
     }
     
     getNodePositions() {
-        return this.nodePositions;
+        return this.connectionNodes.map(node => node.position);
     }
     
-    getFlowPaths() {
-        return this.flowPaths;
+    getEnergyChannels() {
+        return this.energyChannels;
     }
     
-    getFlowField() {
-        return this.flowField;
+    triggerPulse(origin) {
+        // Trigger an energy pulse from interaction point
+        const nearestChannel = this.findNearestChannel(origin);
+        if (nearestChannel) {
+            this.energyPulses.push({
+                channel: nearestChannel,
+                progress: 0,
+                speed: 0.8,
+                intensity: 2.0
+            });
+        }
     }
     
-    getInteractiveObjects() {
-        return this.nodes.map(n => n.userData.core).filter(Boolean);
+    findNearestChannel(point) {
+        let nearest = null;
+        let minDistance = Infinity;
+        
+        this.energyChannels.forEach(channel => {
+            const testPoint = channel.curve.getPoint(0.5);
+            const distance = point.distanceTo(testPoint);
+            if (distance < minDistance) {
+                minDistance = distance;
+                nearest = channel;
+            }
+        });
+        
+        return nearest;
     }
     
     updateParams(params) {
         this.params = params;
     }
     
+    getInteractiveObjects() {
+        return [this.octagonFrame, ...this.connectionNodes.map(n => n.mesh)];
+    }
+    
     dispose() {
-        this.disposed = true;
-        
-        // Dispose all geometries and materials
+        // Cleanup
         this.group.traverse((child) => {
             if (child.geometry) child.geometry.dispose();
             if (child.material) {
@@ -791,16 +598,8 @@ export class NeuralNetwork {
             }
         });
         
-        if (this.flowField) this.flowField.dispose();
+        if (this.flowRenderTarget) this.flowRenderTarget.dispose();
         
         this.scene.remove(this.group);
-        
-        // Clear arrays
-        this.nodes.length = 0;
-        this.edges.length = 0;
-        this.nodePositions.length = 0;
-        this.flowPaths.length = 0;
-        this.pulseWaves.length = 0;
-        this.energyFlow.length = 0;
     }
 }

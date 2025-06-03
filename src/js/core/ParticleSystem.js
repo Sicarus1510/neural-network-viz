@@ -5,144 +5,194 @@ export class ParticleSystem {
     constructor(scene, nodePositions, particleTexture, params, neuralNetwork) {
         this.scene = scene;
         this.nodePositions = nodePositions;
-        this.particleTexture = particleTexture;
+        this.particleTexture = particleTexture || this.createDefaultTexture();
         this.params = params;
         this.neuralNetwork = neuralNetwork;
         
-        // Particle system components
-        this.particleGroups = [];
-        this.flowParticles = null;
-        this.trailParticles = null;
-        this.burstParticles = null;
-        
-        // Flow field data
-        this.flowField = neuralNetwork.getFlowField();
-        this.flowPaths = neuralNetwork.getFlowPaths();
+        // Particle systems
+        this.flowingParticles = null;
+        this.ambientParticles = null;
+        this.trailSystem = null;
         
         // Animation state
         this.time = 0;
-        this.mousePosition = new THREE.Vector2();
-        this.mouseWorldPosition = new THREE.Vector3();
-        
-        // Performance
-        this.maxParticles = params.particleCount;
-        this.trailLength = 20;
+        this.trails = [];
         
         this.init();
     }
     
+    createDefaultTexture() {
+        const canvas = document.createElement('canvas');
+        canvas.width = 64;
+        canvas.height = 64;
+        const ctx = canvas.getContext('2d');
+        
+        const gradient = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+        gradient.addColorStop(0, 'rgba(255, 255, 255, 1)');
+        gradient.addColorStop(0.3, 'rgba(255, 255, 255, 0.8)');
+        gradient.addColorStop(0.5, 'rgba(128, 200, 255, 0.5)');
+        gradient.addColorStop(1, 'rgba(0, 100, 255, 0)');
+        
+        ctx.fillStyle = gradient;
+        ctx.fillRect(0, 0, 64, 64);
+        
+        return new THREE.CanvasTexture(canvas);
+    }
+    
     init() {
-        this.createFlowParticles();
+        this.createFlowingParticles();
         this.createTrailSystem();
-        this.createBurstSystem();
         this.createAmbientParticles();
     }
     
-    createFlowParticles() {
-        // Particles that flow along network paths
-        const particleCount = Math.floor(this.maxParticles * 0.3);
+    createFlowingParticles() {
+        const channels = this.neuralNetwork.getEnergyChannels();
+        const particlesPerChannel = Math.floor(this.params.particleCount / channels.length / 2);
+        const totalParticles = particlesPerChannel * channels.length;
+        
         const geometry = new THREE.BufferGeometry();
         
         // Attributes
-        const positions = new Float32Array(particleCount * 3);
-        const velocities = new Float32Array(particleCount * 3);
-        const colors = new Float32Array(particleCount * 3);
-        const sizes = new Float32Array(particleCount);
-        const lifetimes = new Float32Array(particleCount);
-        const pathIndices = new Float32Array(particleCount);
-        const pathProgress = new Float32Array(particleCount);
-        const speeds = new Float32Array(particleCount);
+        const positions = new Float32Array(totalParticles * 3);
+        const velocities = new Float32Array(totalParticles * 3);
+        const colors = new Float32Array(totalParticles * 3);
+        const sizes = new Float32Array(totalParticles);
+        const opacities = new Float32Array(totalParticles);
+        const channelIndices = new Float32Array(totalParticles);
+        const progress = new Float32Array(totalParticles);
+        const speeds = new Float32Array(totalParticles);
         
-        // Initialize flow particles
-        for (let i = 0; i < particleCount; i++) {
-            const i3 = i * 3;
-            
-            // Assign to random flow path
-            const pathIndex = Math.floor(Math.random() * this.flowPaths.length);
-            const path = this.flowPaths[pathIndex];
-            const progress = Math.random();
-            const point = path.curve.getPoint(progress);
-            
-            positions[i3] = point.x;
-            positions[i3 + 1] = point.y;
-            positions[i3 + 2] = point.z;
-            
-            // Set velocities based on path tangent
-            const tangent = path.curve.getTangent(progress);
-            velocities[i3] = tangent.x;
-            velocities[i3 + 1] = tangent.y;
-            velocities[i3 + 2] = tangent.z;
-            
-            // Color gradient (cyan to blue to purple)
-            const hue = 0.5 + Math.random() * 0.2;
-            const color = new THREE.Color().setHSL(hue, 0.8, 0.6);
-            colors[i3] = color.r;
-            colors[i3 + 1] = color.g;
-            colors[i3 + 2] = color.b;
-            
-            sizes[i] = Math.random() * 4 + 2;
-            lifetimes[i] = Math.random() * 10 + 5;
-            pathIndices[i] = pathIndex;
-            pathProgress[i] = progress;
-            speeds[i] = 0.1 + Math.random() * 0.2;
-        }
+        let particleIndex = 0;
         
-        // Set attributes
+        channels.forEach((channel, channelIndex) => {
+            for (let i = 0; i < particlesPerChannel; i++) {
+                const i3 = particleIndex * 3;
+                
+                // Initialize along the channel curve
+                const t = Math.random();
+                const point = channel.curve.getPoint(t);
+                const tangent = channel.curve.getTangent(t);
+                
+                positions[i3] = point.x;
+                positions[i3 + 1] = point.y;
+                positions[i3 + 2] = point.z;
+                
+                velocities[i3] = tangent.x;
+                velocities[i3 + 1] = tangent.y;
+                velocities[i3 + 2] = tangent.z;
+                
+                // Color variation (cyan to blue)
+                const hue = 0.5 + Math.random() * 0.08;
+                const color = new THREE.Color().setHSL(hue, 0.9, 0.6);
+                colors[i3] = color.r;
+                colors[i3 + 1] = color.g;
+                colors[i3 + 2] = color.b;
+                
+                sizes[particleIndex] = 20 + Math.random() * 30;
+                opacities[particleIndex] = 0.3 + Math.random() * 0.7;
+                channelIndices[particleIndex] = channelIndex;
+                progress[particleIndex] = t;
+                speeds[particleIndex] = 0.3 + Math.random() * 0.4;
+                
+                particleIndex++;
+            }
+        });
+        
         geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
         geometry.setAttribute('velocity', new THREE.BufferAttribute(velocities, 3));
         geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
         geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
-        geometry.setAttribute('lifetime', new THREE.BufferAttribute(lifetimes, 1));
-        geometry.setAttribute('pathIndex', new THREE.BufferAttribute(pathIndices, 1));
-        geometry.setAttribute('pathProgress', new THREE.BufferAttribute(pathProgress, 1));
+        geometry.setAttribute('opacity', new THREE.BufferAttribute(opacities, 1));
+        geometry.setAttribute('channelIndex', new THREE.BufferAttribute(channelIndices, 1));
+        geometry.setAttribute('progress', new THREE.BufferAttribute(progress, 1));
         geometry.setAttribute('speed', new THREE.BufferAttribute(speeds, 1));
         
-        // Advanced shader material
         const material = new THREE.ShaderMaterial({
             uniforms: {
                 uTime: { value: 0 },
                 uTexture: { value: this.particleTexture },
-                uFlowField: { value: this.flowField },
-                uMousePosition: { value: new THREE.Vector3() },
-                uGlowIntensity: { value: this.params.glowIntensity },
-                uParticleSize: { value: this.params.particleSize },
                 uCameraPosition: { value: new THREE.Vector3() }
             },
-            vertexShader: this.getFlowVertexShader(),
-            fragmentShader: this.getFlowFragmentShader(),
+            vertexShader: `
+                attribute float size;
+                attribute float opacity;
+                attribute vec3 velocity;
+                
+                varying vec3 vColor;
+                varying float vOpacity;
+                
+                uniform float uTime;
+                uniform vec3 uCameraPosition;
+                
+                void main() {
+                    vColor = color;
+                    vOpacity = opacity;
+                    
+                    vec3 pos = position;
+                    
+                    // Add some turbulence
+                    float turbulence = sin(uTime * 2.0 + position.x * 5.0) * 0.02;
+                    pos.y += turbulence;
+                    
+                    vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
+                    gl_Position = projectionMatrix * mvPosition;
+                    
+                    // Size attenuation
+                    float sizeAttenuation = 300.0 / -mvPosition.z;
+                    gl_PointSize = size * sizeAttenuation;
+                    gl_PointSize = clamp(gl_PointSize, 2.0, 100.0);
+                    
+                    // Fade based on camera distance
+                    float cameraDistance = length(uCameraPosition - pos);
+                    vOpacity *= smoothstep(20.0, 5.0, cameraDistance);
+                }
+            `,
+            fragmentShader: `
+                uniform sampler2D uTexture;
+                uniform float uTime;
+                
+                varying vec3 vColor;
+                varying float vOpacity;
+                
+                void main() {
+                    vec2 uv = gl_PointCoord;
+                    vec4 texColor = texture2D(uTexture, uv);
+                    
+                    // Create glow
+                    float dist = length(uv - vec2(0.5));
+                    float glow = 1.0 - smoothstep(0.0, 0.5, dist);
+                    glow = pow(glow, 2.0);
+                    
+                    vec3 finalColor = vColor * (1.0 + glow);
+                    float finalAlpha = texColor.a * vOpacity * glow;
+                    
+                    gl_FragColor = vec4(finalColor, finalAlpha);
+                }
+            `,
             transparent: true,
             blending: THREE.AdditiveBlending,
             depthWrite: false,
             vertexColors: true
         });
         
-        this.flowParticles = new THREE.Points(geometry, material);
-        this.flowParticles.frustumCulled = false;
-        this.scene.add(this.flowParticles);
-        this.particleGroups.push(this.flowParticles);
+        this.flowingParticles = new THREE.Points(geometry, material);
+        this.scene.add(this.flowingParticles);
     }
     
     createTrailSystem() {
-        // Create particle trails for flowing effects
-        const trailCount = 50;
+        // Create persistent trail system
+        const maxTrails = 100;
+        const trailLength = 30;
+        const totalPoints = maxTrails * trailLength;
+        
         const geometry = new THREE.BufferGeometry();
-        const totalVertices = trailCount * this.trailLength;
+        const positions = new Float32Array(totalPoints * 3);
+        const colors = new Float32Array(totalPoints * 3);
+        const alphas = new Float32Array(totalPoints);
         
-        const positions = new Float32Array(totalVertices * 3);
-        const colors = new Float32Array(totalVertices * 3);
-        const alphas = new Float32Array(totalVertices);
-        
-        // Initialize trail positions
-        for (let i = 0; i < totalVertices; i++) {
-            positions[i * 3] = 0;
-            positions[i * 3 + 1] = 0;
-            positions[i * 3 + 2] = 0;
-            
-            colors[i * 3] = 0;
-            colors[i * 3 + 1] = 0.8;
-            colors[i * 3 + 2] = 1;
-            
-            alphas[i] = 0;
+        // Initialize all positions to origin
+        for (let i = 0; i < totalPoints * 3; i++) {
+            positions[i] = 0;
         }
         
         geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
@@ -153,7 +203,7 @@ export class ParticleSystem {
             uniforms: {
                 uTime: { value: 0 }
             },
-            vertexShader: /* glsl */`
+            vertexShader: `
                 attribute float alpha;
                 varying vec3 vColor;
                 varying float vAlpha;
@@ -164,18 +214,113 @@ export class ParticleSystem {
                     
                     vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
                     gl_Position = projectionMatrix * mvPosition;
-                    gl_PointSize = 4.0 * (1.0 / -mvPosition.z);
+                    gl_PointSize = mix(1.0, 8.0, vAlpha) * (200.0 / -mvPosition.z);
                 }
             `,
-            fragmentShader: /* glsl */`
+            fragmentShader: `
                 varying vec3 vColor;
                 varying float vAlpha;
                 
                 void main() {
-                    float d = length(gl_PointCoord - vec2(0.5));
-                    if (d > 0.5) discard;
+                    float dist = length(gl_PointCoord - vec2(0.5));
+                    if (dist > 0.5) discard;
                     
-                    float alpha = (1.0 - d * 2.0) * vAlpha;
+                    float alpha = (1.0 - dist * 2.0) * vAlpha;
+                    gl_FragColor = vec4(vColor * 2.0, alpha);
+                }
+            `,
+            transparent: true,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+            vertexColors: true
+        });
+        
+        this.trailSystem = new THREE.Points(geometry, material);
+        this.scene.add(this.trailSystem);
+        
+        // Initialize trail data
+        for (let i = 0; i < maxTrails; i++) {
+            this.trails.push({
+                positions: new Array(trailLength).fill(null).map(() => new THREE.Vector3()),
+                colors: new Array(trailLength).fill(null).map(() => new THREE.Color()),
+                active: false,
+                currentIndex: 0,
+                channelIndex: 0,
+                progress: 0,
+                speed: 0.5 + Math.random() * 0.5,
+                lifetime: 0
+            });
+        }
+    }
+    
+    createAmbientParticles() {
+        // Create ambient floating particles
+        const count = Math.floor(this.params.particleCount * 0.3);
+        const geometry = new THREE.BufferGeometry();
+        
+        const positions = new Float32Array(count * 3);
+        const colors = new Float32Array(count * 3);
+        const sizes = new Float32Array(count);
+        
+        for (let i = 0; i < count; i++) {
+            const i3 = i * 3;
+            
+            // Distribute around the octagon
+            const angle = Math.random() * Math.PI * 2;
+            const radius = 5 + Math.random() * 10;
+            const height = (Math.random() - 0.5) * 2;
+            
+            positions[i3] = Math.cos(angle) * radius;
+            positions[i3 + 1] = height;
+            positions[i3 + 2] = Math.sin(angle) * radius;
+            
+            const color = new THREE.Color().setHSL(0.5 + Math.random() * 0.1, 0.5, 0.5);
+            colors[i3] = color.r;
+            colors[i3 + 1] = color.g;
+            colors[i3 + 2] = color.b;
+            
+            sizes[i] = 5 + Math.random() * 15;
+        }
+        
+        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+        geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+        
+        const material = new THREE.ShaderMaterial({
+            uniforms: {
+                uTime: { value: 0 },
+                uTexture: { value: this.particleTexture }
+            },
+            vertexShader: `
+                attribute float size;
+                varying vec3 vColor;
+                varying float vSize;
+                
+                uniform float uTime;
+                
+                void main() {
+                    vColor = color;
+                    vSize = size;
+                    
+                    vec3 pos = position;
+                    float phase = position.x + position.z;
+                    pos.y += sin(uTime * 0.5 + phase) * 0.2;
+                    pos.x += cos(uTime * 0.3 + phase) * 0.1;
+                    
+                    vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
+                    gl_Position = projectionMatrix * mvPosition;
+                    gl_PointSize = size * (200.0 / -mvPosition.z);
+                }
+            `,
+            fragmentShader: `
+                uniform sampler2D uTexture;
+                uniform float uTime;
+                
+                varying vec3 vColor;
+                
+                void main() {
+                    vec4 texColor = texture2D(uTexture, gl_PointCoord);
+                    float alpha = texColor.a * 0.3 * (0.5 + 0.5 * sin(uTime));
                     gl_FragColor = vec4(vColor, alpha);
                 }
             `,
@@ -185,600 +330,192 @@ export class ParticleSystem {
             vertexColors: true
         });
         
-        this.trailParticles = new THREE.Points(geometry, material);
-        this.scene.add(this.trailParticles);
-        
-        // Store trail data
-        this.trails = [];
-        for (let i = 0; i < trailCount; i++) {
-            this.trails.push({
-                positions: new Array(this.trailLength).fill(null).map(() => new THREE.Vector3()),
-                currentIndex: 0,
-                active: false,
-                pathIndex: 0,
-                progress: 0,
-                speed: 0.1 + Math.random() * 0.1
-            });
-        }
-    }
-    
-    createBurstSystem() {
-        // Enhanced burst particle system
-        const burstCount = 500;
-        const geometry = new THREE.BufferGeometry();
-        
-        const positions = new Float32Array(burstCount * 3);
-        const velocities = new Float32Array(burstCount * 3);
-        const colors = new Float32Array(burstCount * 3);
-        const sizes = new Float32Array(burstCount);
-        const lifetimes = new Float32Array(burstCount);
-        const types = new Float32Array(burstCount); // 0: spark, 1: glow, 2: trail
-        
-        for (let i = 0; i < burstCount; i++) {
-            const i3 = i * 3;
-            positions[i3] = 0;
-            positions[i3 + 1] = 0;
-            positions[i3 + 2] = 0;
-            
-            velocities[i3] = 0;
-            velocities[i3 + 1] = 0;
-            velocities[i3 + 2] = 0;
-            
-            colors[i3] = 1;
-            colors[i3 + 1] = 1;
-            colors[i3 + 2] = 1;
-            
-            sizes[i] = 0;
-            lifetimes[i] = 0;
-            types[i] = Math.floor(Math.random() * 3);
-        }
-        
-        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-        geometry.setAttribute('velocity', new THREE.BufferAttribute(velocities, 3));
-        geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-        geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
-        geometry.setAttribute('lifetime', new THREE.BufferAttribute(lifetimes, 1));
-        geometry.setAttribute('particleType', new THREE.BufferAttribute(types, 1));
-        
-        const material = new THREE.ShaderMaterial({
-            uniforms: {
-                uTime: { value: 0 },
-                uTexture: { value: this.particleTexture }
-            },
-            vertexShader: this.getBurstVertexShader(),
-            fragmentShader: this.getBurstFragmentShader(),
-            transparent: true,
-            blending: THREE.AdditiveBlending,
-            depthWrite: false,
-            vertexColors: true
-        });
-        
-        this.burstParticles = new THREE.Points(geometry, material);
-        this.scene.add(this.burstParticles);
-    }
-    
-    createAmbientParticles() {
-        // Ambient floating particles for atmosphere
-        const ambientCount = Math.floor(this.maxParticles * 0.2);
-        const geometry = new THREE.BufferGeometry();
-        
-        const positions = new Float32Array(ambientCount * 3);
-        const colors = new Float32Array(ambientCount * 3);
-        const sizes = new Float32Array(ambientCount);
-        const phases = new Float32Array(ambientCount);
-        
-        for (let i = 0; i < ambientCount; i++) {
-            const i3 = i * 3;
-            
-            // Distribute in sphere around octagon
-            const theta = Math.random() * Math.PI * 2;
-            const phi = Math.acos(Math.random() * 2 - 1);
-            const radius = 10 + Math.random() * 5;
-            
-            positions[i3] = Math.sin(phi) * Math.cos(theta) * radius;
-            positions[i3 + 1] = Math.sin(phi) * Math.sin(theta) * radius;
-            positions[i3 + 2] = Math.cos(phi) * radius * 0.5;
-            
-            // Soft colors
-            const hue = 0.5 + Math.random() * 0.1;
-            const color = new THREE.Color().setHSL(hue, 0.3, 0.6);
-            colors[i3] = color.r;
-            colors[i3 + 1] = color.g;
-            colors[i3 + 2] = color.b;
-            
-            sizes[i] = Math.random() * 2 + 1;
-            phases[i] = Math.random() * Math.PI * 2;
-        }
-        
-        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-        geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-        geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
-        geometry.setAttribute('phase', new THREE.BufferAttribute(phases, 1));
-        
-        const material = new THREE.ShaderMaterial({
-            uniforms: {
-                uTime: { value: 0 },
-                uTexture: { value: this.particleTexture }
-            },
-            vertexShader: /* glsl */`
-                attribute float size;
-                attribute float phase;
-                
-                varying vec3 vColor;
-                varying float vPhase;
-                
-                uniform float uTime;
-                
-                void main() {
-                    vColor = color;
-                    vPhase = phase;
-                    
-                    vec3 pos = position;
-                    
-                    // Gentle floating motion
-                    pos.y += sin(uTime * 0.5 + phase) * 0.5;
-                    pos.x += cos(uTime * 0.3 + phase * 2.0) * 0.3;
-                    
-                    vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
-                    gl_Position = projectionMatrix * mvPosition;
-                    
-                    gl_PointSize = size * (300.0 / -mvPosition.z);
-                }
-            `,
-            fragmentShader: /* glsl */`
-                uniform sampler2D uTexture;
-                uniform float uTime;
-                
-                varying vec3 vColor;
-                varying float vPhase;
-                
-                void main() {
-                    vec2 uv = gl_PointCoord;
-                    vec4 tex = texture2D(uTexture, uv);
-                    
-                    float alpha = tex.a * (0.5 + 0.5 * sin(uTime + vPhase));
-                    
-                    gl_FragColor = vec4(vColor, alpha * 0.3);
-                }
-            `,
-            transparent: true,
-            blending: THREE.AdditiveBlending,
-            depthWrite: false,
-            vertexColors: true
-        });
-        
-        const ambientParticles = new THREE.Points(geometry, material);
-        this.scene.add(ambientParticles);
-        this.particleGroups.push(ambientParticles);
-    }
-    
-    // Shader functions
-    getFlowVertexShader() {
-        return /* glsl */`
-            attribute vec3 velocity;
-            attribute float size;
-            attribute float lifetime;
-            attribute float pathProgress;
-            attribute float speed;
-            
-            uniform float uTime;
-            uniform float uParticleSize;
-            uniform vec3 uCameraPosition;
-            uniform vec3 uMousePosition;
-            
-            varying vec3 vColor;
-            varying float vOpacity;
-            varying float vGlow;
-            
-            void main() {
-                vColor = color;
-                
-                // Calculate opacity based on lifetime
-                vOpacity = smoothstep(0.0, 2.0, lifetime) * smoothstep(10.0, 8.0, lifetime);
-                
-                // Apply velocity motion
-                vec3 pos = position + velocity * uTime * 0.1;
-                
-                // Mouse interaction
-                vec3 toMouse = pos - uMousePosition;
-                float mouseDistance = length(toMouse);
-                if (mouseDistance < 3.0) {
-                    pos += normalize(toMouse) * (3.0 - mouseDistance) * 0.5;
-                    vGlow = 1.0 - mouseDistance / 3.0;
-                } else {
-                    vGlow = 0.0;
-                }
-                
-                vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
-                gl_Position = projectionMatrix * mvPosition;
-                
-                // Size with distance attenuation
-                float sizeAttenuation = 300.0 / -mvPosition.z;
-                gl_PointSize = size * uParticleSize * sizeAttenuation;
-                
-                // Add pulsing based on speed
-                gl_PointSize *= (1.0 + 0.3 * sin(uTime * speed * 10.0));
-                gl_PointSize = clamp(gl_PointSize, 1.0, 30.0);
-            }
-        `;
-    }
-    
-    getFlowFragmentShader() {
-        return /* glsl */`
-            uniform sampler2D uTexture;
-            uniform float uGlowIntensity;
-            uniform float uTime;
-            
-            varying vec3 vColor;
-            varying float vOpacity;
-            varying float vGlow;
-            
-            void main() {
-                vec2 uv = gl_PointCoord;
-                vec4 texColor = texture2D(uTexture, uv);
-                
-                // Create sharp center with soft edges
-                float dist = length(uv - vec2(0.5));
-                float alpha = 1.0 - smoothstep(0.0, 0.5, dist);
-                
-                // Enhanced glow effect
-                float glow = exp(-dist * 4.0) * uGlowIntensity;
-                glow += exp(-dist * 8.0) * uGlowIntensity * 0.5; // Double glow layer
-                
-                // Color with enhanced brightness
-                vec3 finalColor = vColor;
-                finalColor += vec3(1.0) * glow * 0.5;
-                finalColor *= (1.0 + vGlow * 2.0); // Mouse glow
-                
-                // Brightness variation
-                float brightness = 1.0 + 0.3 * sin(uTime * 3.0 + gl_FragCoord.x * 0.01);
-                finalColor *= brightness;
-                
-                // Final alpha with texture
-                float finalAlpha = alpha * vOpacity * texColor.a;
-                finalAlpha = max(finalAlpha, glow * 0.3); // Ensure glow is visible
-                
-                gl_FragColor = vec4(finalColor, finalAlpha);
-            }
-        `;
-    }
-    
-    getBurstVertexShader() {
-        return /* glsl */`
-            attribute vec3 velocity;
-            attribute float size;
-            attribute float lifetime;
-            attribute float particleType;
-            
-            uniform float uTime;
-            
-            varying vec3 vColor;
-            varying float vOpacity;
-            varying float vType;
-            
-            void main() {
-                vColor = color;
-                vType = particleType;
-                vOpacity = lifetime;
-                
-                vec3 pos = position;
-                
-                // Different motion for different particle types
-                if (particleType < 0.5) {
-                    // Sparks - fast and straight
-                    pos += velocity * uTime * 2.0;
-                } else if (particleType < 1.5) {
-                    // Glow - slower with curve
-                    pos += velocity * uTime;
-                    pos.y += sin(uTime * 3.0) * 0.1;
-                } else {
-                    // Trail - follows path with gravity
-                    pos += velocity * uTime;
-                    pos.y -= uTime * uTime * 0.5; // Gravity
-                }
-                
-                vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
-                gl_Position = projectionMatrix * mvPosition;
-                
-                // Size based on type and lifetime
-                float baseSize = particleType < 0.5 ? size * 0.5 : size;
-                gl_PointSize = baseSize * (300.0 / -mvPosition.z) * lifetime;
-            }
-        `;
-    }
-    
-    getBurstFragmentShader() {
-        return /* glsl */`
-            uniform sampler2D uTexture;
-            
-            varying vec3 vColor;
-            varying float vOpacity;
-            varying float vType;
-            
-            void main() {
-                vec2 uv = gl_PointCoord;
-                vec4 texColor = texture2D(uTexture, uv);
-                
-                float alpha = texColor.a * vOpacity;
-                
-                vec3 finalColor = vColor;
-                
-                // Different effects for different types
-                if (vType < 0.5) {
-                    // Spark - bright and sharp
-                    finalColor *= 2.0;
-                    alpha *= 1.5;
-                } else if (vType < 1.5) {
-                    // Glow - soft and warm
-                    float glow = 1.0 - length(uv - vec2(0.5)) * 2.0;
-                    finalColor *= (1.0 + glow);
-                } else {
-                    // Trail - fading
-                    alpha *= 0.5;
-                }
-                
-                gl_FragColor = vec4(finalColor, alpha);
-            }
-        `;
-    }
-    
-    updateMousePosition(mousePosition) {
-        this.mousePosition = mousePosition;
-        
-        // Convert to world position
-        const camera = this.scene.getObjectByProperty('type', 'PerspectiveCamera');
-        if (camera) {
-            const vector = new THREE.Vector3(mousePosition.x, mousePosition.y, 0.5);
-            vector.unproject(camera);
-            vector.sub(camera.position).normalize();
-            const distance = -camera.position.z / vector.z;
-            this.mouseWorldPosition = camera.position.clone().add(
-                vector.multiplyScalar(distance)
-            );
-        }
-    }
-    
-    triggerBurst(position) {
-        if (!this.burstParticles) return;
-        
-        const positions = this.burstParticles.geometry.attributes.position;
-        const velocities = this.burstParticles.geometry.attributes.velocity;
-        const colors = this.burstParticles.geometry.attributes.color;
-        const sizes = this.burstParticles.geometry.attributes.size;
-        const lifetimes = this.burstParticles.geometry.attributes.lifetime;
-        const types = this.burstParticles.geometry.attributes.particleType;
-        
-        const burstSize = 30;
-        let count = 0;
-        
-        // Find inactive particles and activate them
-        for (let i = 0; i < lifetimes.count && count < burstSize; i++) {
-            if (lifetimes.array[i] <= 0) {
-                const i3 = i * 3;
-                
-                // Position at burst origin
-                positions.array[i3] = position.x;
-                positions.array[i3 + 1] = position.y;
-                positions.array[i3 + 2] = position.z;
-                
-                // Random spherical velocity
-                const theta = Math.random() * Math.PI * 2;
-                const phi = Math.acos(Math.random() * 2 - 1);
-                const speed = 2 + Math.random() * 3;
-                
-                velocities.array[i3] = Math.sin(phi) * Math.cos(theta) * speed;
-                velocities.array[i3 + 1] = Math.sin(phi) * Math.sin(theta) * speed;
-                velocities.array[i3 + 2] = Math.cos(phi) * speed * 0.5;
-                
-                // Burst colors
-                const hue = 0.5 + Math.random() * 0.1;
-                const color = new THREE.Color().setHSL(hue, 1.0, 0.6);
-                colors.array[i3] = color.r;
-                colors.array[i3 + 1] = color.g;
-                colors.array[i3 + 2] = color.b;
-                
-                sizes.array[i] = 5 + Math.random() * 10;
-                lifetimes.array[i] = 1.0;
-                types.array[i] = Math.floor(Math.random() * 3);
-                
-                count++;
-            }
-        }
-        
-        // Update attributes
-        positions.needsUpdate = true;
-        velocities.needsUpdate = true;
-        colors.needsUpdate = true;
-        sizes.needsUpdate = true;
-        lifetimes.needsUpdate = true;
+        this.ambientParticles = new THREE.Points(geometry, material);
+        this.scene.add(this.ambientParticles);
     }
     
     update(elapsedTime, deltaTime) {
         this.time = elapsedTime;
         
-        // Update all shader uniforms
-        this.particleGroups.forEach(group => {
-            if (group.material && group.material.uniforms) {
-                if (group.material.uniforms.uTime) {
-                    group.material.uniforms.uTime.value = elapsedTime;
-                }
-                if (group.material.uniforms.uMousePosition) {
-                    group.material.uniforms.uMousePosition.value.copy(this.mouseWorldPosition);
-                }
-                const camera = this.scene.getObjectByProperty('type', 'PerspectiveCamera');
-                if (camera && group.material.uniforms.uCameraPosition) {
-                    group.material.uniforms.uCameraPosition.value.copy(camera.position);
-                }
+        // Update camera position in shaders
+        const camera = this.scene.getObjectByProperty('type', 'PerspectiveCamera');
+        if (camera) {
+            if (this.flowingParticles) {
+                this.flowingParticles.material.uniforms.uCameraPosition.value.copy(camera.position);
+            }
+        }
+        
+        // Update all material uniforms
+        [this.flowingParticles, this.trailSystem, this.ambientParticles].forEach(system => {
+            if (system && system.material.uniforms.uTime) {
+                system.material.uniforms.uTime.value = elapsedTime;
             }
         });
         
-        // Update flow particles along paths
-        if (this.flowParticles) {
-            this.updateFlowParticles(deltaTime);
+        // Update flowing particles along channels
+        if (this.flowingParticles) {
+            const positions = this.flowingParticles.geometry.attributes.position;
+            const velocities = this.flowingParticles.geometry.attributes.velocity;
+            const progress = this.flowingParticles.geometry.attributes.progress;
+            const speeds = this.flowingParticles.geometry.attributes.speed;
+            const channelIndices = this.flowingParticles.geometry.attributes.channelIndex;
+            const opacities = this.flowingParticles.geometry.attributes.opacity;
+            
+            const channels = this.neuralNetwork.getEnergyChannels();
+            
+            for (let i = 0; i < positions.count; i++) {
+                const i3 = i * 3;
+                
+                // Update progress
+                progress.array[i] += speeds.array[i] * deltaTime * this.params.animationSpeed;
+                
+                if (progress.array[i] > 1) {
+                    progress.array[i] = 0;
+                    // Reset opacity
+                    opacities.array[i] = 0.3 + Math.random() * 0.7;
+                }
+                
+                // Get position on curve
+                const channelIndex = Math.floor(channelIndices.array[i]);
+                const channel = channels[channelIndex];
+                
+                if (channel) {
+                    const t = progress.array[i];
+                    const point = channel.curve.getPoint(t);
+                    const tangent = channel.curve.getTangent(t);
+                    
+                    // Add some offset for variation
+                    const offset = Math.sin(elapsedTime * 2 + i) * 0.1;
+                    
+                    positions.array[i3] = point.x + tangent.y * offset;
+                    positions.array[i3 + 1] = point.y;
+                    positions.array[i3 + 2] = point.z - tangent.x * offset;
+                    
+                    velocities.array[i3] = tangent.x;
+                    velocities.array[i3 + 1] = tangent.y;
+                    velocities.array[i3 + 2] = tangent.z;
+                }
+                
+                // Fade in/out at ends
+                const fadeIn = smoothstep(0, 0.1, progress.array[i]);
+                const fadeOut = smoothstep(1, 0.9, progress.array[i]);
+                opacities.array[i] *= fadeIn * fadeOut;
+            }
+            
+            positions.needsUpdate = true;
+            velocities.needsUpdate = true;
+            progress.needsUpdate = true;
+            opacities.needsUpdate = true;
         }
         
         // Update trails
-        if (this.trailParticles) {
-            this.updateTrails(deltaTime);
-        }
-        
-        // Update burst particles
-        if (this.burstParticles) {
-            this.updateBurstParticles(deltaTime);
-        }
-    }
-    
-    updateFlowParticles(deltaTime) {
-        const positions = this.flowParticles.geometry.attributes.position;
-        const velocities = this.flowParticles.geometry.attributes.velocity;
-        const lifetimes = this.flowParticles.geometry.attributes.lifetime;
-        const pathIndices = this.flowParticles.geometry.attributes.pathIndex;
-        const pathProgress = this.flowParticles.geometry.attributes.pathProgress;
-        const speeds = this.flowParticles.geometry.attributes.speed;
-        
-        for (let i = 0; i < positions.count; i++) {
-            const i3 = i * 3;
-            
-            // Update progress along path
-            pathProgress.array[i] += speeds.array[i] * deltaTime * this.params.animationSpeed;
-            
-            // Loop or switch paths
-            if (pathProgress.array[i] > 1) {
-                pathProgress.array[i] = 0;
-                
-                // Sometimes switch to a connected path
-                if (Math.random() < 0.3) {
-                    pathIndices.array[i] = Math.floor(Math.random() * this.flowPaths.length);
-                }
-            }
-            
-            // Get position on path
-            const pathIndex = Math.floor(pathIndices.array[i]);
-            const path = this.flowPaths[pathIndex];
-            if (path && path.curve) {
-                const point = path.curve.getPoint(pathProgress.array[i]);
-                const tangent = path.curve.getTangent(pathProgress.array[i]);
-                
-                // Update position with some offset
-                const offset = Math.sin(this.time * 2 + i) * 0.1;
-                positions.array[i3] = point.x + tangent.y * offset;
-                positions.array[i3 + 1] = point.y - tangent.x * offset;
-                positions.array[i3 + 2] = point.z + Math.sin(this.time + i) * 0.05;
-                
-                // Update velocity to match tangent
-                velocities.array[i3] = tangent.x;
-                velocities.array[i3 + 1] = tangent.y;
-                velocities.array[i3 + 2] = tangent.z;
-            }
-            
-            // Update lifetime
-            lifetimes.array[i] -= deltaTime;
-            if (lifetimes.array[i] <= 0) {
-                lifetimes.array[i] = 10 + Math.random() * 10;
-            }
-        }
-        
-        positions.needsUpdate = true;
-        velocities.needsUpdate = true;
-        lifetimes.needsUpdate = true;
-        pathProgress.needsUpdate = true;
+        this.updateTrails(deltaTime);
     }
     
     updateTrails(deltaTime) {
-        // Update trail positions based on flow particles
-        const trailPositions = this.trailParticles.geometry.attributes.position;
-        const trailAlphas = this.trailParticles.geometry.attributes.alpha;
+        const positions = this.trailSystem.geometry.attributes.position;
+        const colors = this.trailSystem.geometry.attributes.color;
+        const alphas = this.trailSystem.geometry.attributes.alpha;
         
-        // Activate some trails randomly
-        this.trails.forEach((trail, index) => {
-            if (!trail.active && Math.random() < 0.01) {
+        const channels = this.neuralNetwork.getEnergyChannels();
+        
+        this.trails.forEach((trail, trailIndex) => {
+            // Randomly activate trails
+            if (!trail.active && Math.random() < 0.02) {
                 trail.active = true;
-                trail.pathIndex = Math.floor(Math.random() * this.flowPaths.length);
+                trail.channelIndex = Math.floor(Math.random() * channels.length);
                 trail.progress = 0;
+                trail.lifetime = 2.0;
+                trail.currentIndex = 0;
+                
+                // Set trail color
+                const hue = 0.5 + Math.random() * 0.1;
+                const color = new THREE.Color().setHSL(hue, 1.0, 0.7);
+                trail.colors.forEach(c => c.copy(color));
             }
             
             if (trail.active) {
                 trail.progress += trail.speed * deltaTime;
+                trail.lifetime -= deltaTime;
                 
-                if (trail.progress > 1) {
+                if (trail.progress > 1 || trail.lifetime <= 0) {
                     trail.active = false;
+                    
                     // Clear trail
-                    for (let i = 0; i < this.trailLength; i++) {
-                        const idx = index * this.trailLength + i;
-                        trailAlphas.array[idx] = 0;
+                    for (let i = 0; i < trail.positions.length; i++) {
+                        const idx = trailIndex * trail.positions.length + i;
+                        alphas.array[idx] = 0;
                     }
                 } else {
-                    // Update trail position
-                    const path = this.flowPaths[trail.pathIndex];
-                    if (path && path.curve) {
-                        const point = path.curve.getPoint(trail.progress);
+                    // Update trail
+                    const channel = channels[trail.channelIndex];
+                    if (channel) {
+                        const point = channel.curve.getPoint(trail.progress);
                         
-                        // Shift trail positions
-                        for (let i = this.trailLength - 1; i > 0; i--) {
-                            trail.positions[i].copy(trail.positions[i - 1]);
-                        }
-                        trail.positions[0].copy(point);
+                        // Add new position
+                        trail.currentIndex = (trail.currentIndex + 1) % trail.positions.length;
+                        trail.positions[trail.currentIndex].copy(point);
                         
                         // Update buffer
-                        for (let i = 0; i < this.trailLength; i++) {
-                            const idx = index * this.trailLength + i;
-                            const pos = trail.positions[i];
+                        for (let i = 0; i < trail.positions.length; i++) {
+                            const idx = trailIndex * trail.positions.length + i;
+                            const pos = trail.positions[(trail.currentIndex - i + trail.positions.length) % trail.positions.length];
                             
-                            trailPositions.array[idx * 3] = pos.x;
-                            trailPositions.array[idx * 3 + 1] = pos.y;
-                            trailPositions.array[idx * 3 + 2] = pos.z;
+                            positions.array[idx * 3] = pos.x;
+                            positions.array[idx * 3 + 1] = pos.y;
+                            positions.array[idx * 3 + 2] = pos.z;
+                            
+                            const color = trail.colors[i];
+                            colors.array[idx * 3] = color.r;
+                            colors.array[idx * 3 + 1] = color.g;
+                            colors.array[idx * 3 + 2] = color.b;
                             
                             // Fade trail
-                            trailAlphas.array[idx] = (1 - i / this.trailLength) * 0.5;
+                            alphas.array[idx] = (1 - i / trail.positions.length) * trail.lifetime / 2.0;
                         }
                     }
                 }
             }
         });
         
-        trailPositions.needsUpdate = true;
-        trailAlphas.needsUpdate = true;
+        positions.needsUpdate = true;
+        colors.needsUpdate = true;
+        alphas.needsUpdate = true;
     }
     
-    updateBurstParticles(deltaTime) {
-        const lifetimes = this.burstParticles.geometry.attributes.lifetime;
-        
-        for (let i = 0; i < lifetimes.count; i++) {
-            if (lifetimes.array[i] > 0) {
-                lifetimes.array[i] -= deltaTime * 2; // Faster decay
-                if (lifetimes.array[i] < 0) {
-                    lifetimes.array[i] = 0;
-                }
-            }
-        }
-        
-        lifetimes.needsUpdate = true;
+    updateMousePosition(mousePosition) {
+        // Handle mouse interaction if needed
+    }
+    
+    triggerBurst(position) {
+        // Trigger particle burst at position
+        // Could activate multiple trails from this position
+        const nearestTrails = this.trails.filter(t => !t.active).slice(0, 5);
+        nearestTrails.forEach(trail => {
+            trail.active = true;
+            trail.progress = 0;
+            trail.lifetime = 3.0;
+            // Set to burst from interaction point
+        });
     }
     
     updateParams(params) {
         this.params = params;
-        
-        // Update material uniforms
-        this.particleGroups.forEach(group => {
-            if (group.material && group.material.uniforms) {
-                if (group.material.uniforms.uGlowIntensity) {
-                    group.material.uniforms.uGlowIntensity.value = params.glowIntensity;
-                }
-                if (group.material.uniforms.uParticleSize) {
-                    group.material.uniforms.uParticleSize.value = params.particleSize;
-                }
-            }
-        });
     }
     
     dispose() {
-        this.particleGroups.forEach(group => {
-            if (group.geometry) group.geometry.dispose();
-            if (group.material) group.material.dispose();
-            this.scene.remove(group);
+        [this.flowingParticles, this.trailSystem, this.ambientParticles].forEach(system => {
+            if (system) {
+                if (system.geometry) system.geometry.dispose();
+                if (system.material) system.material.dispose();
+                this.scene.remove(system);
+            }
         });
-        
-        this.particleGroups.length = 0;
-        this.trails.length = 0;
     }
+}
+
+// Utility function
+function smoothstep(min, max, value) {
+    const x = Math.max(0, Math.min(1, (value - min) / (max - min)));
+    return x * x * (3 - 2 * x);
 }
