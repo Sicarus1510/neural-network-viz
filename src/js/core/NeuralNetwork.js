@@ -1,11 +1,11 @@
 import * as THREE from 'three';
-import { ConvexGeometry } from 'three/examples/jsm/geometries/ConvexGeometry.js';
 
 export class NeuralNetwork {
     constructor(scene, params) {
         this.scene = scene;
         this.params = params;
         this.group = new THREE.Group();
+        this.group.name = 'NeuralNetworkGroup';
         this.nodes = [];
         this.edges = [];
         this.nodePositions = [];
@@ -14,13 +14,24 @@ export class NeuralNetwork {
         this.octagonRadius = 8;
         this.meshDensity = 32;
         this.innerStructureComplexity = 3;
+        
+        // Performance optimization
+        this.maxPulseWaves = 5;
+        this.disposed = false;
     }
     
     async init() {
-        this.createOctagonStructure();
-        this.createInternalMesh();
-        this.createEdges();
-        this.scene.add(this.group);
+        if (this.disposed) return;
+        
+        try {
+            this.createOctagonStructure();
+            this.createInternalMesh();
+            this.createEdges();
+            this.scene.add(this.group);
+        } catch (error) {
+            console.error('Failed to initialize neural network:', error);
+            throw error;
+        }
     }
     
     createOctagonStructure() {
@@ -54,6 +65,9 @@ export class NeuralNetwork {
         };
         
         const geometry = new THREE.ExtrudeGeometry(shape, extrudeSettings);
+        geometry.computeBoundingBox();
+        geometry.center();
+        
         const material = new THREE.MeshPhongMaterial({
             color: 0x1a1a1a,
             emissive: 0x0a0a0a,
@@ -65,6 +79,7 @@ export class NeuralNetwork {
         });
         
         this.octagonMesh = new THREE.Mesh(geometry, material);
+        this.octagonMesh.name = 'OctagonMesh';
         this.group.add(this.octagonMesh);
         
         // Store octagon vertices for edge creation
@@ -73,7 +88,7 @@ export class NeuralNetwork {
     
     createInternalMesh() {
         // Generate internal node positions using Fibonacci sphere distribution
-        const nodeCount = Math.floor(this.params.particleCount / 10);
+        const nodeCount = Math.min(Math.floor(this.params.particleCount / 10), 500); // Cap at 500 nodes
         const phi = Math.PI * (3 - Math.sqrt(5)); // Golden angle
         
         for (let i = 0; i < nodeCount; i++) {
@@ -123,8 +138,10 @@ export class NeuralNetwork {
         node.userData = {
             nodeId: `node_${this.nodes.length}`,
             baseEmissiveIntensity: 0.5,
-            pulsePhase: Math.random() * Math.PI * 2
+            pulsePhase: Math.random() * Math.PI * 2,
+            originalPosition: position.clone()
         };
+        node.name = `Node_${this.nodes.length}`;
         
         this.nodes.push(node);
         this.group.add(node);
@@ -133,7 +150,7 @@ export class NeuralNetwork {
     createDelaunayMesh() {
         // Simplified Delaunay-like mesh creation
         const positions = this.nodePositions;
-        const connections = [];
+        const connections = new Map(); // Use Map to avoid duplicates
         
         // Connect nearby nodes
         for (let i = 0; i < positions.length; i++) {
@@ -156,9 +173,8 @@ export class NeuralNetwork {
                 const connection = [i, distances[k].index].sort();
                 const key = connection.join('-');
                 
-                if (!connections.some(c => c.key === key)) {
-                    connections.push({
-                        key,
+                if (!connections.has(key)) {
+                    connections.set(key, {
                         indices: connection,
                         distance: distances[k].distance
                     });
@@ -188,14 +204,17 @@ export class NeuralNetwork {
             color: 0x4488ff,
             transparent: true,
             opacity: 0.4,
-            linewidth: 1
+            linewidth: 1 // Note: linewidth > 1 only works with LineBasicMaterial on certain platforms
         });
         
         const line = new THREE.Line(geometry, material);
         line.userData = {
             distance,
-            baseOpacity: 0.4
+            baseOpacity: 0.4,
+            startPos: start.clone(),
+            endPos: end.clone()
         };
+        line.name = `Edge_${this.edges.length}`;
         
         this.edges.push(line);
         this.group.add(line);
@@ -213,7 +232,7 @@ export class NeuralNetwork {
         }
         
         // Connect some internal nodes to octagon vertices
-        const octagonConnections = Math.floor(this.nodePositions.length * 0.2);
+        const octagonConnections = Math.min(Math.floor(this.nodePositions.length * 0.2), 20);
         for (let i = 0; i < octagonConnections; i++) {
             const nodeIndex = Math.floor(Math.random() * this.nodePositions.length);
             const vertexIndex = Math.floor(Math.random() * this.octagonVertices.length);
@@ -227,6 +246,11 @@ export class NeuralNetwork {
     }
     
     triggerPulse(origin) {
+        // Limit number of active pulse waves
+        if (this.pulseWaves.length >= this.maxPulseWaves) {
+            this.pulseWaves.shift(); // Remove oldest
+        }
+        
         this.pulseWaves.push({
             origin: origin.clone(),
             radius: 0,
@@ -237,6 +261,8 @@ export class NeuralNetwork {
     }
     
     update(elapsedTime, deltaTime) {
+        if (this.disposed) return;
+        
         // Rotate the entire structure
         this.group.rotation.z += deltaTime * this.params.rotationSpeed * 0.1;
         
@@ -247,6 +273,10 @@ export class NeuralNetwork {
             );
             node.material.emissiveIntensity = 
                 node.userData.baseEmissiveIntensity * intensity * this.params.glowIntensity;
+            
+            // Subtle floating animation
+            const floatOffset = Math.sin(elapsedTime * 0.5 + node.userData.pulsePhase) * 0.05;
+            node.position.y = node.userData.originalPosition.y + floatOffset;
         });
         
         // Update pulse waves
@@ -260,22 +290,19 @@ export class NeuralNetwork {
                 const distance = node.position.distanceTo(wave.origin);
                 if (distance < wave.radius && distance > wave.radius - 2) {
                     const influence = wave.intensity * (1 - (distance - wave.radius + 2) / 2);
-                    node.material.emissiveIntensity += influence;
+                    node.material.emissiveIntensity = Math.min(1, node.material.emissiveIntensity + influence);
                 }
             });
             
             this.edges.forEach(edge => {
                 const midpoint = new THREE.Vector3()
-                    .addVectors(
-                        new THREE.Vector3().fromArray(edge.geometry.attributes.position.array, 0),
-                        new THREE.Vector3().fromArray(edge.geometry.attributes.position.array, 3)
-                    )
+                    .addVectors(edge.userData.startPos, edge.userData.endPos)
                     .multiplyScalar(0.5);
                 
                 const distance = midpoint.distanceTo(wave.origin);
                 if (distance < wave.radius && distance > wave.radius - 2) {
                     const influence = wave.intensity * (1 - (distance - wave.radius + 2) / 2);
-                    edge.material.opacity = edge.userData.baseOpacity + influence * 0.6;
+                    edge.material.opacity = Math.min(1, edge.userData.baseOpacity + influence * 0.6);
                 }
             });
             
@@ -297,5 +324,34 @@ export class NeuralNetwork {
     
     getInteractiveObjects() {
         return this.nodes;
+    }
+    
+    dispose() {
+        this.disposed = true;
+        
+        // Dispose geometries and materials
+        this.nodes.forEach(node => {
+            node.geometry.dispose();
+            node.material.dispose();
+        });
+        
+        this.edges.forEach(edge => {
+            edge.geometry.dispose();
+            edge.material.dispose();
+        });
+        
+        if (this.octagonMesh) {
+            this.octagonMesh.geometry.dispose();
+            this.octagonMesh.material.dispose();
+        }
+        
+        // Remove from scene
+        this.scene.remove(this.group);
+        
+        // Clear arrays
+        this.nodes.length = 0;
+        this.edges.length = 0;
+        this.nodePositions.length = 0;
+        this.pulseWaves.length = 0;
     }
 }

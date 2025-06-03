@@ -17,12 +17,15 @@
   "devDependencies": {
     "vite": "^5.0.10",
     "@types/three": "^0.160.0",
-    "terser": "^5.26.0",
-    "vite-plugin-glsl": "^1.2.1"
+    "terser": "^5.26.0"
   },
   "browserslist": [
     "last 2 versions",
     "not dead",
     "> 0.2%"
-  ]
+  ],
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  }
 }
